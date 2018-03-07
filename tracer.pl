@@ -51,16 +51,16 @@ use constant { # {{{
 
 # scale constants
 use constant { # {{{
-  SCALE_IA     =>  (5/1024) * 1000 / AnodeRs,
-  SCALE_IS     =>  (5/1024) * 1000 / ScreenRs,
+  SCALE_IA  => 1000 / AnodeRs,
+  SCALE_IS  => 1000 / ScreenRs,
   #
-  SCALE_VA => (5/1024) * ((AnodeR1 + AnodeR2) / AnodeR1),
-  SCALE_VS => (5/1024) * ((ScreenR1 + ScreenR2) / ScreenR1),
+  SCALE_VA => (AnodeR1 + AnodeR2) / AnodeR1,
+  SCALE_VS => (ScreenR1 + ScreenR2) / ScreenR1,
 
-  SCALE_VSU    => (5/1024) * (VsupR1+VsupR2)/VsupR1, # needs calibration scale
+  SCALE_VSU => (VsupR1+VsupR2)/VsupR1, # needs calibration scale
 
-  ENCODE_TRACER => 1024/5,
-  DECODE_TRACER => 5/1024,
+  ENCODE_TRACER => 1024/5, # encode values to the tracer
+  DECODE_TRACER => 5/1024, # decode values from the tracer
 }; # }}}
 
 # decode gain from uTracer to a human readable value
@@ -181,14 +181,15 @@ my $VsupSystem = 19.5;
 
 sub getVa { # {{{
   my ($voltage) = @_;
-  return (1024 /5) * (AnodeR1 / (AnodeR1 + AnodeR2)) * ($voltage + $VsupSystem) * CalVar1;
+  return ENCODE_TRACER * (AnodeR1 / (AnodeR1 + AnodeR2)) * ($voltage + $VsupSystem) * CalVar1;
 } # }}}
 
 sub getVs { # {{{
   my ($voltage) = @_;
-  return ((1024/5) * (ScreenR1 / (ScreenR1 + ScreenR2)) * ($voltage + $VsupSystem) * CalVar2);
+  return (ENCODE_TRACER * (ScreenR1 / (ScreenR1 + ScreenR2)) * ($voltage + $VsupSystem) * CalVar2);
 } # }}}
 
+# also PWM, mapping a 0 - 5V to 0 - -50V, referenced from the system supply
 sub getVg { # {{{
   my ($voltage) = @_;
   my $cal ;
@@ -236,8 +237,8 @@ sub do_measurement {
 }
 
 
-#my $data = decode_measurement("10 077A 0000 0724 0001 0034 0033 0338 0288 0707"); # from utracer
-my $data = decode_measurement("10 02B0 0043 02B4 0044 01DB 01DA 033A 0287 0303"); # from utracer
+my $data = decode_measurement("10 077A 0000 0724 0001 0034 0033 0338 0288 0707"); # from utracer
+#my $data = decode_measurement("10 02B0 0043 02B4 0044 01DB 01DA 033A 0287 0303"); # from utracer
 
 # decode_measurement is feature-complete.
 sub decode_measurement { # {{{
@@ -250,23 +251,18 @@ sub decode_measurement { # {{{
   # status byte = 11 - compliance error
   # $compliance_error = $status_byte & 0x1 == 1;
 
-  $data->{Vpsu} *= SCALE_VSU;
-  $data->{Vpsu} *= CalVar5;
+  $data->{Vpsu} *= DECODE_TRACER * SCALE_VSU * CalVar5;
 
-  $data->{Va} = $data->{Va} * (5 / 1024) * ((AnodeR1 + AnodeR2) / (AnodeR1 * CalVar1)) - $data->{Vpsu};
-  $data->{Vs} = $data->{Vs} * (5 / 1024) * ((ScreenR1 + ScreenR2) / (ScreenR1 * CalVar2)) - $data->{Vpsu};
+  $data->{Va} = $data->{Va} * (5/1024) * ((AnodeR1 + AnodeR2) / (AnodeR1 * CalVar1)) - $data->{Vpsu};
+  $data->{Vs} = $data->{Vs} * (5/1024) * ((ScreenR1 + ScreenR2) / (ScreenR1 * CalVar2)) - $data->{Vpsu};
 
-  $data->{Ia} *= SCALE_IA;
-  $data->{Ia} *= CalVar3;
+  $data->{Ia} *= DECODE_TRACER * SCALE_IA * CalVar3;
 
-  $data->{Is} *= SCALE_IS;
-  $data->{Is} *= CalVar4;
+  $data->{Is} *= DECODE_TRACER * SCALE_IS * CalVar4;
 
-  $data->{Ia_Raw} *= SCALE_IA;
-  $data->{Ia_Raw} *= CalVar3;
+  $data->{Ia_Raw} *= DECODE_TRACER * SCALE_IA * CalVar3;
 
-  $data->{Is_Raw} *= SCALE_IS;
-  $data->{Is_Raw} *= CalVar4;
+  $data->{Is_Raw} *= DECODE_TRACER * SCALE_IS * CalVar4;
 
   $data->{Vmin} = 5 * ((VminR1 + VminR2) / VminR1) * (( $data->{Vmin} / 1024) - 1);
   $data->{Vmin} += 5;
