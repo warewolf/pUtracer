@@ -35,14 +35,6 @@ use constant {   # {{{
   VminR2 => 47_000 # R4 (-15v supply)
 }; # }}}
 
-# XXX factor these aliases out?
-use constant { # {{{
-  AnodeDivR1 => AnodeR1,
-  AnodeDivR2 => AnodeR2,
-  ScreenDivR1 => ScreenR1,
-  ScreenDivR2 => ScreenR2,
-}; # }}}
-
 # calibration
 use constant { # {{{
   CalVar1  => 1018/1000, # Va Gain
@@ -59,13 +51,16 @@ use constant { # {{{
 
 # scale constants
 use constant { # {{{
-  SCALE_IA     =>  5 / 1024 * 1000 / AnodeRs,
-  SCALE_IS     =>  5 / 1024 * 1000 / ScreenRs,
+  SCALE_IA     =>  (5/1024) * 1000 / AnodeRs,
+  SCALE_IS     =>  (5/1024) * 1000 / ScreenRs,
   #
-  SCALE_VA => 5 / 1024 * ((AnodeDivR1 + AnodeDivR2) / AnodeDivR1),
-  SCALE_VS => 5 / 1024 * ((ScreenDivR1 + ScreenDivR2) / ScreenDivR1),
+  SCALE_VA => (5/1024) * ((AnodeR1 + AnodeR2) / AnodeR1),
+  SCALE_VS => (5/1024) * ((ScreenR1 + ScreenR2) / ScreenR1),
 
-  SCALE_VSU    => ( 5 / 1024 ) * (VsupR1+VsupR2)/VsupR1, # needs calibration scale
+  SCALE_VSU    => (5/1024) * (VsupR1+VsupR2)/VsupR1, # needs calibration scale
+
+  ENCODE_TRACER => 1024/5,
+  DECODE_TRACER => 5/1024,
 }; # }}}
 
 # decode gain from uTracer to a human readable value
@@ -186,12 +181,12 @@ my $VsupSystem = 19.5;
 
 sub getVa { # {{{
   my ($voltage) = @_;
-  return (1024 / 5) * (AnodeR1 / (AnodeR1 + AnodeR2)) * ($voltage + $VsupSystem) * CalVar1;
+  return (1024 /5) * (AnodeR1 / (AnodeR1 + AnodeR2)) * ($voltage + $VsupSystem) * CalVar1;
 } # }}}
 
 sub getVs { # {{{
   my ($voltage) = @_;
-  return ((1024 / 5) * (ScreenR1 / (ScreenR1 + ScreenR2)) * ($voltage + $VsupSystem) * CalVar2);
+  return ((1024/5) * (ScreenR1 / (ScreenR1 + ScreenR2)) * ($voltage + $VsupSystem) * CalVar2);
 } # }}}
 
 sub getVg { # {{{
@@ -209,7 +204,12 @@ sub getVg { # {{{
 
 sub getVf { # {{{
   my ($voltage) = @_;
-  return 1024 * ( $voltage * $voltage) / ($VsupSystem * $VsupSystem) * CalVar5;
+  my $ret = 1024 * ( $voltage ** 2) / ($VsupSystem **2) * CalVar5;
+  if ($ret > 1023) {
+    warn sprintf("Requested filament voltage %f > 100%% PWM duty cycle, clamping to 100%%, %f.",$voltage,$VsupSystem);
+    $ret = 1023;
+  }
+  return $ret;
 } # }}}
 
 
@@ -253,8 +253,8 @@ sub decode_measurement { # {{{
   $data->{Vpsu} *= SCALE_VSU;
   $data->{Vpsu} *= CalVar5;
 
-  $data->{Va} = $data->{Va} * (5 / 1024) * ((AnodeDivR1 + AnodeDivR2) / (AnodeDivR1 * CalVar1)) - $data->{Vpsu};
-  $data->{Vs} = $data->{Vs} * (5 / 1024) * ((ScreenDivR1 + ScreenDivR2) / (ScreenDivR1 * CalVar2)) - $data->{Vpsu};
+  $data->{Va} = $data->{Va} * (5 / 1024) * ((AnodeR1 + AnodeR2) / (AnodeR1 * CalVar1)) - $data->{Vpsu};
+  $data->{Vs} = $data->{Vs} * (5 / 1024) * ((ScreenR1 + ScreenR2) / (ScreenR1 * CalVar2)) - $data->{Vpsu};
 
   $data->{Ia} *= SCALE_IA;
   $data->{Ia} *= CalVar3;
