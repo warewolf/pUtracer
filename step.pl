@@ -7,18 +7,19 @@ use Getopt::Long;
 use Data::Dumper;
 
 my $opts = {
-  #vg=> "-5",
-  #vg=> "-5-0/5",
-  #vg=> "-5/0",
-  va=> "50-300/5",
-  vs=> "50-300/5",
+  steps => 5,
+  vg=> "-5",
+  va=> "50-300",
+  vs=> "50-300",
 };
 
-GetOptions($opts,"vg=s","va=s","vs=s");
+GetOptions($opts,"steps=i","vg=s","va=s","vs=s");
 
 
 foreach my $arg (qw(vg va vs)) {
-  my ($range,$steps) = split(m/\//,$opts->{$arg},2);
+  my $steps = $opts->{steps};
+  #my ($range,$steps) = split(m/\//,$opts->{$arg},2);
+  my $range = $opts->{$arg};
 
   # steps may not exist, default to 0
   $steps = defined($steps) ? $steps: 0;
@@ -37,4 +38,5 @@ foreach my $arg (qw(vg va vs)) {
   push @{ $opts->{$arg} },$range_start+$step_size*$_ for (0..$steps);
   printf("Arg: %s, start: %s, end: %s, step size: %s, steps %s\n",$arg,$range_start,$range_end,$step_size, $steps);
 }
+printf "steps %d\n",$#{$opts->{va}};
 print Data::Dumper->Dump([$opts],[qw($opts)]);
