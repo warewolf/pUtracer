@@ -136,6 +136,17 @@ my $compliance_to_tracer = { # {{{
 }; # }}}
 
 my $tubes = { # {{{
+  "resistor" => { # {{{
+    "steps" => 10,
+    "vg" => -1, # grid volts
+    "va" => "2-200",  # plate volts
+    "vs" => "2-200",  # plate volts
+    "rp" => 7700, # plate resistance, in ohms
+    "ia" => 10.5, # plate current, in mA
+    "gm" => 2.2,  # transconductance, in mA/V
+    "mu" => 17,   # amplification factor
+    "vf" => 0, # filament voltage (in series, not using center tap)
+  },   # }}}
   "12au7-quick" => { # {{{
     "vg" => -8.5, # grid volts
     "va" => 250,  # plate volts
@@ -329,8 +340,6 @@ sub getVf { # {{{ # getVf is done
 #printf("Vg at %d = %04x\n",$opts->{vg},getVg($opts->{vg}));
 #printf("Vf at %2.1f = %04x\n",$opts->{vf},getVf($opts->{vf}));
 
-$|++;
-$/=undef;
 do_curve();
 
 sub do_curve {
@@ -356,7 +365,8 @@ sub do_curve {
   #   00 - set settings
   send_settings(compliance => 200, averaging => "auto", gain_is => "auto", gain_ia => "auto");
   #   10 - do measurement
-  foreach my $vg_step (0 .. $opts->{steps}) {
+  #foreach my $vg_step (0 .. $opts->{steps}) {
+  foreach my $vg_step (0 .. $#{$opts->{vg}}) {
     foreach my $step (0 .. $opts->{steps}) {
 	  printf("Measuring Vg: %d\tVa: %d\tVs: %d\tVf: %f\n",
 		$opts->{vg}->[$vg_step],
@@ -396,21 +406,21 @@ sub ping { # {{{
   print "< $response\n" if ($opts->{debug});
 } # }}}
 
-sub send_settings {
+sub send_settings { # {{{
   my (%args) = @_;
   my $string = sprintf("%02X00000000%02X%02X%02X%02X",
     CMD_START,
     $compliance_to_tracer->{$args{compliance}},
-    $averaging_to_tracer->{$args{averaging}},
-    $gain_to_tracer->{$args{gain_is}},
-    $gain_to_tracer->{$args{gain_ia}},
+    $averaging_to_tracer->{$args{averaging}} || 0,
+    $gain_to_tracer->{$args{gain_is}} || 0,
+    $gain_to_tracer->{$args{gain_ia}} || 0,
   );
   print "> $string\n" if ($opts->{debug});;
   $tracer->write($string);
   my ($bytes,$response) = $tracer->read(18);
   print "< $response\n" if ($opts->{debug});
   if ($response ne $string) { warn "uTracer returned $response, when I expected $string"; }
-}
+} # }}}
 
 sub do_measurement {
   # strCommandString = strCommand + strA + strS + strG + strF
