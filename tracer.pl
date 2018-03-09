@@ -67,6 +67,16 @@ use constant { # {{{
 
 }; # }}}
 
+my $averaging_to_tracer = {
+  auto => 0x40,
+    32 => 0x20,
+    16 => 0x10,
+     8 => 0x08,
+     4 => 0x04,
+     2 => 0x02,
+     1 => 0x01,
+};
+
 # decode gain from uTracer to a human readable value
 my $gain_from_tracer = { # {{{
   0x08 => "auto",
@@ -114,15 +124,15 @@ my @measurement_fields = qw(
 );
 
 my $compliance_to_tracer = { # {{{
-  200 => "8F",
-  175 => "8C",
-  150 => "AD",
-  125 => "AB",
-  100 => "84",
-  75 => "81",
-  50 => "A4",
-  25 => "A2",
-  0 =>  "00",
+  200 => 0x8F,
+  175 => 0x8C,
+  150 => 0xAD,
+  125 => 0xAB,
+  100 => 0x84,
+  75 => 0x81,
+  50 => 0xA4,
+  25 => 0xA2,
+  0 =>  0x00,
 }; # }}}
 
 my $tubes = { # {{{
@@ -170,6 +180,7 @@ my $tubes = { # {{{
 }; # }}}
 
 my $opts; $opts = { 
+  device => "/dev/ttyUSB0",
   correction => 0,
   steps => 0,
   compliance => 200,
@@ -200,7 +211,17 @@ GetOptions($opts,"hot", # leave filiments on or not
 ) || pod2usage(2);
 delete $opts->{tube};
 
-foreach my $arg (qw(vg va vs vf)) {
+# connect to uTracer
+#open(my $tracer,"+<",$opts->{device}) or die "Couldn't open uTracer device $opts->{device}!: ($!)";
+my $tracer = Device::SerialPort->new($opts->{device});
+$tracer->baudrate(9600);
+# n
+$tracer->databits(8);
+$tracer->stopbits(1);
+$tracer->read_const_time(10000);
+
+# turn args into measurement steps
+foreach my $arg (qw(vg va vs vf)) { # {{{
   my $steps = $opts->{steps};
   #my ($range,$steps) = split(m/\//,$opts->{$arg},2);
   my $range = $opts->{$arg};
@@ -221,8 +242,7 @@ foreach my $arg (qw(vg va vs vf)) {
   # add our stuff in.
   push @{ $opts->{$arg} },$range_start+$step_size*$_ for (0..$steps);
   printf("Arg: %s, start: %s, end: %s, step size: %s, steps %s\n",$arg,$range_start,$range_end,$step_size, $steps);
-} 
-
+}  # }}}
 
 # rough guess as to what the system supply is supposed to be
 my $VsupSystem = 19.5;
@@ -309,6 +329,8 @@ sub getVf { # {{{ # getVf is done
 #printf("Vg at %d = %04x\n",$opts->{vg},getVg($opts->{vg}));
 #printf("Vf at %2.1f = %04x\n",$opts->{vf},getVf($opts->{vf}));
 
+$|++;
+$/=undef;
 do_curve();
 
 sub do_curve {
@@ -331,8 +353,9 @@ sub do_curve {
 	}
   }
 
-  # $a=0; printf("%2.2f\n",$a+=12.6/10) for (0..9)
   #   00 - set settings
+  send_settings(compliance => 200, averaging => "auto", gain_is => "auto", gain_ia => "auto");
+  #   10 - do measurement
   foreach my $vg_step (0 .. $opts->{steps}) {
     foreach my $step (0 .. $opts->{steps}) {
 	  printf("Measuring Vg: %d\tVa: %d\tVs: %d\tVf: %f\n",
@@ -342,39 +365,51 @@ sub do_curve {
 		$opts->{vf}->[$step]);
     }
   }
-  #   10 - do measurement
   # 30 -- end measurement
   # 00 - all zeros turn everything off 
 }
 
-sub set_filament {
+sub set_filament { # {{{
   my ($voltage) =@_;
   my $string = sprintf("%02X00000000%02X%02X%02X%02X",
-  CMD_FILAMENT,
-  0,0,0,$voltage
+	CMD_FILAMENT,
+	0,0,0,$voltage
   );
   print "> $string\n" if ($opts->{debug});;
-}
+  $tracer->write($string);
+  my ($bytes,$response) = $tracer->read(18);
+  print "< $response\n" if ($opts->{debug});
+  if ($response ne $string) { warn "uTracer returned $response, when I expected $string"; }
+} # }}}
 
-sub ping {
+sub ping { # {{{
   my $string = sprintf("%02X00000000%02X%02X%02X%02X",
     CMD_PING,
     0,0,0,0
   );
   print "> $string\n" if ($opts->{debug});;
-}
+  $tracer->write($string);
+  my ($bytes,$response) = $tracer->read(18);
+  print "< $response\n" if ($opts->{debug});
+  if ($response ne $string) { warn "uTracer returned $response, when I expected $string"; }
+  ($bytes,$response) = $tracer->read(38);
+  print "< $response\n" if ($opts->{debug});
+} # }}}
 
 sub send_settings {
   my (%args) = @_;
   my $string = sprintf("%02X00000000%02X%02X%02X%02X",
     CMD_START,
     $compliance_to_tracer->{$args{compliance}},
-    $args{averaging},
-    $args{gain_is},
-    $args{gain_ia},
+    $averaging_to_tracer->{$args{averaging}},
+    $gain_to_tracer->{$args{gain_is}},
+    $gain_to_tracer->{$args{gain_ia}},
   );
   print "> $string\n" if ($opts->{debug});;
-  
+  $tracer->write($string);
+  my ($bytes,$response) = $tracer->read(18);
+  print "< $response\n" if ($opts->{debug});
+  if ($response ne $string) { warn "uTracer returned $response, when I expected $string"; }
 }
 
 sub do_measurement {
