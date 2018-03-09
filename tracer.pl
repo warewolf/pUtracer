@@ -10,12 +10,12 @@ use Device::SerialPort;
 use List::Util qw(max);
 
 use constant {
-       CMD_START => "00",
-     CMD_MEASURE => "10",
-CMD_MEASURE_HOLD => "20", # for magic eye?
-         CMD_END => "30",
-    CMD_FILAMENT => "40",
-        CMD_PING => "50"
+       CMD_START => 0x00,
+     CMD_MEASURE => 0x10,
+CMD_MEASURE_HOLD => 0x20, # for magic eye?
+         CMD_END => 0x30,
+    CMD_FILAMENT => 0x40,
+        CMD_PING => 0x50
 };
 
 # Resistors in voltage dividers, 400V version
@@ -113,7 +113,7 @@ my @measurement_fields = qw(
   Gain_Is
 );
 
-my $compliance_to_hex = { # {{{
+my $compliance_to_tracer = { # {{{
   200 => "8F",
   175 => "8C",
   150 => "AD",
@@ -208,7 +208,7 @@ foreach my $arg (qw(vg va vs vf)) {
   # steps may not exist, default to 0
   $steps = defined($steps) ? $steps: 0;
   
-  my ($range_start,$range_end) = ($range =~ m/(-?\d+)(?:-(-?\d+))?/);
+  my ($range_start,$range_end) = ($range =~ m/(-?[\d\.]+)(?:-(-?[\d\.]+))?/);
 
   # range end may not exist, default to range start.
   $range_end = defined($range_end) ? $range_end : $range_start;
@@ -220,7 +220,7 @@ foreach my $arg (qw(vg va vs vf)) {
   $opts->{$arg} = [];
   # add our stuff in.
   push @{ $opts->{$arg} },$range_start+$step_size*$_ for (0..$steps);
-  #printf("Arg: %s, start: %s, end: %s, step size: %s, steps %s\n",$arg,$range_start,$range_end,$step_size, $steps);
+  printf("Arg: %s, start: %s, end: %s, step size: %s, steps %s\n",$arg,$range_start,$range_end,$step_size, $steps);
 } 
 
 
@@ -314,13 +314,28 @@ do_curve();
 sub do_curve {
   # 00 - all zeros turn everything off 
   send_settings(compliance => 0, averaging => 0, gain_is => 0, gain_ia => 0);
+
   # 50 - read out AD
+  ping();
+
+  # set filament
   # 40 - set fil voltage (repeated 10x) +=10% of voltage, once a second
+  if ($opts->{hot}) {
+    # "hot" mode - just set it to max
+	  set_filament($opts->{vf}->[-1]);
+  } else {
+    # cold mode - ramp it up slowly
+	foreach my $mult (1..10) {
+	  set_filament($mult* ( $opts->{vf}->[-1]/10));
+	  sleep 1;
+	}
+  }
+
   # $a=0; printf("%2.2f\n",$a+=12.6/10) for (0..9)
   #   00 - set settings
   foreach my $vg_step (0 .. $opts->{steps}) {
     foreach my $step (0 .. $opts->{steps}) {
-	  printf("Measuring Vg: %d\tVa: %d\tVs: %d\tVf: %d\n",
+	  printf("Measuring Vg: %d\tVa: %d\tVs: %d\tVf: %f\n",
 		$opts->{vg}->[$vg_step],
 		$opts->{va}->[$step],
 		$opts->{vs}->[$step],
@@ -332,16 +347,33 @@ sub do_curve {
   # 00 - all zeros turn everything off 
 }
 
+sub set_filament {
+  my ($voltage) =@_;
+  my $string = sprintf("%02X00000000%02X%02X%02X%02X",
+  CMD_FILAMENT,
+  0,0,0,$voltage
+  );
+  print "> $string\n" if ($opts->{debug});;
+}
+
+sub ping {
+  my $string = sprintf("%02X00000000%02X%02X%02X%02X",
+    CMD_PING,
+    0,0,0,0
+  );
+  print "> $string\n" if ($opts->{debug});;
+}
+
 sub send_settings {
   my (%args) = @_;
   my $string = sprintf("%02X00000000%02X%02X%02X%02X",
-    0,
-    $gain_to_tracer->{ $args{compliance} },
+    CMD_START,
+    $compliance_to_tracer->{$args{compliance}},
     $args{averaging},
     $args{gain_is},
     $args{gain_ia},
   );
-  print "> $string\n";
+  print "> $string\n" if ($opts->{debug});;
   
 }
 
