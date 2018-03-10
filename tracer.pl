@@ -106,7 +106,7 @@ my $gain_to_average = { # {{{
 }; # }}}
 
 my @measurement_fields = qw(
-  Status
+ Status
 
   Ia
   Ia_Raw
@@ -192,7 +192,7 @@ my $opts; $opts = {  # {{{
   device => "/dev/ttyUSB0",
   debug => 0,
   verbose => 1,
-  correction => 0,
+  correction => 1,
   steps => 0,
   compliance => 200,
   gain => "auto",
@@ -222,10 +222,9 @@ GetOptions($opts,"hot", # leave filiments on or not
   "compliance=i", # miliamps 
   "averaging=i", # averaging 
   "gain=i", # gain 
-  "correction", # low voltage correction
+  "correction!", # low voltage correction
   "log=s",
 ) || pod2usage(2);
-delete $opts->{tube};
 
 $opts->{tube} ||= $opts->{preset_name};
 
@@ -239,6 +238,7 @@ $tracer->stopbits(1);
 $tracer->read_const_time(10000);
 
 open(my $log,">>",$opts->{log});
+$log->printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",qw(Name Tube Vpsu Vmin Vg Va Va_Meas Ia Ia_Raw Ia_Gain Vs Vs_Meas Is Is_Raw Is_Gain Vf));
 
 # turn args into measurement steps
 foreach my $arg (qw(vg va vs vf)) { # {{{
@@ -259,7 +259,6 @@ foreach my $arg (qw(vg va vs vf)) { # {{{
   $opts->{$arg} = [];
   # add our stuff in.
   push @{ $opts->{$arg} },$range_start+$step_size*$_ for (0..$steps);
-  printf("Arg: %s, start: %s, end: %s, step size: %s, steps %s\n",$arg,$range_start,$range_end,$step_size, $steps);
 }  # }}}
 
 # rough guess as to what the system supply is supposed to be
@@ -340,11 +339,6 @@ sub getVf { # {{{ # getVf is done
   return $ret;
 } # }}}
 
-#printf("Va at %d = %04x\n",$opts->{va},getVa($opts->{va}));
-#printf("Vs at %d = %04x\n",$opts->{vs},getVs($opts->{vs}));
-#printf("Vg at %d = %04x\n",$opts->{vg},getVg($opts->{vg}));
-#printf("Vf at %2.1f = %04x\n",$opts->{vf},getVf($opts->{vf}));
-
 do_curve();
 
 sub do_curve {
@@ -383,8 +377,8 @@ sub do_curve {
 		vs => $opts->{vs}->[$step],
 		vf => $opts->{vf}->[$step] || $opts->{vf}->[0],
       );
-      # name tube Vpsu Vmin Vg Va Va_meas Ia Vs Vs_meas Is Vf
-      $log->printf("%s\t%s\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n",
+      # name tube Vpsu Vmin Vg Va Va_meas Ia Ia_Raw Ia_Gain Vs Vs_meas Is Is_Raw Is_Gain Vf
+      $log->printf("%s\t%s\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n",
         $opts->{name},
         $opts->{tube},
         $measurement->{Vpsu},
@@ -393,16 +387,23 @@ sub do_curve {
 		$opts->{va}->[$step],
 		$measurement->{Va},
 		$measurement->{Ia},
+		$measurement->{Ia_Raw},
+		$measurement->{Gain_Ia},
 		$opts->{vs}->[$step],
 		$measurement->{Vs},
 		$measurement->{Is},
+		$measurement->{Is_Raw},
+		$measurement->{Gain_Is},
 		$opts->{vf}->[$step] || $opts->{vf}->[0],
       );
     }
   }
   # 30 -- end measurement
+  end_measurement();
   # 00 - all zeros turn everything off 
 }
+
+#reset_tracer();
 
 sub end_measurement { # {{{
   my (%args) = @_;
@@ -481,15 +482,27 @@ sub do_measurement { # {{{
   return $data;
 } # }}}
 
-#my $data = decode_measurement("10 077A 0000 0724 0001 0034 0033 0338 0288 0707"); # from utracer
-#my $data = decode_measurement("10 02B0 0043 02B4 0044 01DB 01DA 033A 0287 0303"); # from utracer
 
-# decode_measurement is feature-complete.
+sub reset_tracer {
+  $tracer->write("\x1b");
+}
+
+sub abort {
+  #reset_tracer();
+  end_measurement();
+  set_filament(0);
+  die "uTracer reports compliance error, current draw is too high.  Test aborted";
+}
+
 sub decode_measurement { # {{{
   my ($str) = @_;
   $str =~ s/ //g;
   my $data = {};
   @{$data}{@measurement_fields} = map {hex($_) } unpack("A2 A4 A4 A4 A4 A4 A4 A4 A4 A2 A2",$str);
+
+  if ($data->{Status} == 0x11) {
+    abort();
+  }
 
   # status byte = 10 - all good.
   # status byte = 11 - compliance error
@@ -527,19 +540,22 @@ sub decode_measurement { # {{{
   # find max gain
   my $gain = max @{$data}{qw(Gain_Ia Gain_Is)};
 
-  # fix measured current by dividing it by the number of samples (averaging)
+  # undo gain amplification
+  $data->{Ia} /= $gain;
+  $data->{Is} /= $gain;
+
+  # average
   $data->{Ia} /= $gain_to_average->{$gain};
   $data->{Is} /= $gain_to_average->{$gain};
 
   # correction - this appears to be backwards?
   if ($opts->{correction}) {
-    
     $data->{Va} = $data->{Va} - (($data->{Ia}) / 1000) * AnodeRs - (0.6 * CalVar7);
     $data->{Vs} = $data->{Vs} - (($data->{Is}) / 1000) * ScreenRs - (0.6 * CalVar7);
   }
 
   if ($opts->{verbose}) {
-    printf "stat ____ia iacmp ____is _is_comp ____va ____vs _vPSU _vneg ia_gain is_gain\n";
+    printf "\nstat ____ia iacmp ____is _is_comp ____va ____vs _vPSU _vneg ia_gain is_gain\n";
     printf "% 4x % 6.1f % 5.1f % 6.1f % 8.1f % 6.1f % 6.1f % 2.1f % 2.1f % 7d % 7d\n", @{$data}{@measurement_fields};
   }
 
