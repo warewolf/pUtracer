@@ -10,12 +10,12 @@ use Device::SerialPort;
 use List::Util qw(max);
 
 use constant {
-       CMD_START => 0x00,
-     CMD_MEASURE => 0x10,
-CMD_MEASURE_HOLD => 0x20, # for magic eye?
-         CMD_END => 0x30,
-    CMD_FILAMENT => 0x40,
-        CMD_PING => 0x50
+  CMD_START        => 0x00,
+  CMD_MEASURE      => 0x10,
+  CMD_MEASURE_HOLD => 0x20,    # for magic eye?
+  CMD_END          => 0x30,
+  CMD_FILAMENT     => 0x40,
+  CMD_PING         => 0x50
 };
 
 # Resistors in voltage dividers, 400V version
@@ -67,7 +67,7 @@ use constant { # {{{
 
 }; # }}}
 
-my $averaging_to_tracer = {
+my $averaging_to_tracer = { # {{{
   auto => 0x40,
     32 => 0x20,
     16 => 0x10,
@@ -75,7 +75,7 @@ my $averaging_to_tracer = {
      4 => 0x04,
      2 => 0x02,
      1 => 0x01,
-};
+}; # }}}
 
 # decode gain from uTracer to a human readable value
 my $gain_from_tracer = { # {{{
@@ -137,10 +137,9 @@ my $compliance_to_tracer = { # {{{
 
 my $tubes = { # {{{
   "resistor" => { # {{{
-    "steps" => 10,
     "vg" => -1, # grid volts
-    "va" => "2-200",  # plate volts
-    "vs" => "2-200",  # plate volts
+    "va" => "2-200/2",  # plate volts
+    "vs" => "2-200/2",  # plate volts
     "rp" => 7700, # plate resistance, in ohms
     "ia" => 10.5, # plate current, in mA
     "gm" => 2.2,  # transconductance, in mA/V
@@ -168,10 +167,9 @@ my $tubes = { # {{{
     "vf" => 12.6,
   },   # }}}
   "12ax7-dangerous-this-will-destroy-your-tube" => { # {{{
-    "steps" => 5,
-    "vg" => "-5-0",
-    "va" => "50-300",
-    "vs" => "50-300",
+    "vg" => "-5-0/5",
+    "va" => "50-300/5",
+    "vs" => "50-300/5",
     "rp" => 6250,
     "ia" => 1.2,
     "gm" => 1.6,
@@ -190,15 +188,18 @@ my $tubes = { # {{{
   },   # }}}
 }; # }}}
 
-my $opts; $opts = { 
+my $opts; $opts = {  # {{{
   device => "/dev/ttyUSB0",
+  debug => 0,
+  verbose => 1,
   correction => 0,
   steps => 0,
   compliance => 200,
   gain => "auto",
   averaging => "auto",
-  tube => sub { # {{{
+  preset => sub { # {{{
     $_[1] = lc $_[1];
+    $opts->{preset_name} = $_[1];
     $_[1] = "$_[1]-quick" if (! exists $tubes->{$_[1]});
     if (exists $tubes->{$_[1]}) {
       map { $opts->{$_} = $tubes->{$_[1]}->{$_} } keys %{ $tubes->{$_[1]} }; 
@@ -207,20 +208,26 @@ my $opts; $opts = {
       die "Don't know tube type $_[1]";
     }
   }, # }}}
-};
+}; # }}}
 
 GetOptions($opts,"hot", # leave filiments on or not
   "debug",
+  "verbose",
   "device=s", # serial device
-  "tube=s",   # tube shortcut
-  "vg=s","va=s","vs=s","rp=f","ia=f","gm=f","mu=f","vf=f", # value override
+  "preset=s", # preset trace settings
   "name=s",   # name to put in log
+  "tube=s",   # tube type
+  # 
+  "vg=s","va=s","vs=s","rp=f","ia=f","gm=f","mu=f","vf=s", # value override
   "compliance=i", # miliamps 
   "averaging=i", # averaging 
   "gain=i", # gain 
   "correction", # low voltage correction
+  "log=s",
 ) || pod2usage(2);
 delete $opts->{tube};
+
+$opts->{tube} ||= $opts->{preset_name};
 
 # connect to uTracer
 #open(my $tracer,"+<",$opts->{device}) or die "Couldn't open uTracer device $opts->{device}!: ($!)";
@@ -231,11 +238,11 @@ $tracer->databits(8);
 $tracer->stopbits(1);
 $tracer->read_const_time(10000);
 
+open(my $log,">>",$opts->{log});
+
 # turn args into measurement steps
 foreach my $arg (qw(vg va vs vf)) { # {{{
-  my $steps = $opts->{steps};
-  #my ($range,$steps) = split(m/\//,$opts->{$arg},2);
-  my $range = $opts->{$arg};
+  my ($range,$steps) = split(m/\//,$opts->{$arg},2);
   
   # steps may not exist, default to 0
   $steps = defined($steps) ? $steps: 0;
@@ -300,10 +307,8 @@ sub getVg { # {{{ # getVg is done
   }
 
   if (abs($voltage) > 4) { # {{{
-    print STDERR "Using -40v calibration value\n";
     $cal = CalVar6;
   } else {
-    print STDERR "Using -4v calibration value\n";
     $cal = CalVar8;
   } # }}}
   
@@ -347,7 +352,7 @@ sub do_curve {
   send_settings(compliance => 0, averaging => 0, gain_is => 0, gain_ia => 0);
 
   # 50 - read out AD
-  ping();
+  my $data = ping();
 
   # set filament
   # 40 - set fil voltage (repeated 10x) +=10% of voltage, once a second
@@ -365,21 +370,53 @@ sub do_curve {
   #   00 - set settings
   send_settings(compliance => 200, averaging => "auto", gain_is => "auto", gain_ia => "auto");
   #   10 - do measurement
-  #foreach my $vg_step (0 .. $opts->{steps}) {
   foreach my $vg_step (0 .. $#{$opts->{vg}}) {
-    foreach my $step (0 .. $opts->{steps}) {
+    foreach my $step (0 ..  $#{$opts->{va}}) {
 	  printf("Measuring Vg: %d\tVa: %d\tVs: %d\tVf: %f\n",
 		$opts->{vg}->[$vg_step],
 		$opts->{va}->[$step],
 		$opts->{vs}->[$step],
-		$opts->{vf}->[$step]);
+		$opts->{vf}->[$step] || $opts->{vf}->[0]) if ($opts->{verbose});
+      my $measurement = do_measurement(
+		vg => $opts->{vg}->[$vg_step],
+		va => $opts->{va}->[$step],
+		vs => $opts->{vs}->[$step],
+		vf => $opts->{vf}->[$step] || $opts->{vf}->[0],
+      );
+      # name tube Vpsu Vmin Vg Va Va_meas Ia Vs Vs_meas Is Vf
+      $log->printf("%s\t%s\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n",
+        $opts->{name},
+        $opts->{tube},
+        $measurement->{Vpsu},
+        $measurement->{Vmin},
+		$opts->{vg}->[$vg_step],
+		$opts->{va}->[$step],
+		$measurement->{Va},
+		$measurement->{Ia},
+		$opts->{vs}->[$step],
+		$measurement->{Vs},
+		$measurement->{Is},
+		$opts->{vf}->[$step] || $opts->{vf}->[0],
+      );
     }
   }
   # 30 -- end measurement
   # 00 - all zeros turn everything off 
 }
 
+sub end_measurement { # {{{
+  my (%args) = @_;
+  my $string = sprintf("%02X00000000%02X%02X%02X%02X",
+    CMD_END, 0,0,0,0
+  );
+  print "> $string\n" if ($opts->{debug});;
+  $tracer->write($string);
+  my ($bytes,$response) = $tracer->read(18);
+  print "< $response\n" if ($opts->{debug});
+  if ($response ne $string) { warn "uTracer returned $response, when I expected $string"; }
+} # }}}
 sub set_filament { # {{{
+
   my ($voltage) =@_;
   my $string = sprintf("%02X00000000%02X%02X%02X%02X",
 	CMD_FILAMENT,
@@ -404,6 +441,8 @@ sub ping { # {{{
   if ($response ne $string) { warn "uTracer returned $response, when I expected $string"; }
   ($bytes,$response) = $tracer->read(38);
   print "< $response\n" if ($opts->{debug});
+  my $data = decode_measurement($response);
+  return $data;
 } # }}}
 
 sub send_settings { # {{{
@@ -422,13 +461,27 @@ sub send_settings { # {{{
   if ($response ne $string) { warn "uTracer returned $response, when I expected $string"; }
 } # }}}
 
-sub do_measurement {
-  # strCommandString = strCommand + strA + strS + strG + strF
-  #                            10   0047   0047   0016   006B
-}
+sub do_measurement { # {{{
+  my (%args) = @_;
+  my $string = sprintf("%02X%04X%04X%04X%04X",
+    CMD_MEASURE,
+    getVa($args{va}),
+    getVs($args{vs}),
+    getVg($args{vg}),
+    getVf($args{vf}),
+  );
+  print "> $string\n" if ($opts->{debug});;
+  $tracer->write($string);
+  my ($bytes,$response) = $tracer->read(18);
+  print "< $response\n" if ($opts->{debug});
+  if ($response ne $string) { warn "uTracer returned $response, when I expected $string"; }
+  ($bytes,$response) = $tracer->read(38);
+  print "< $response\n" if ($opts->{debug});
+  my $data = decode_measurement($response);
+  return $data;
+} # }}}
 
-
-my $data = decode_measurement("10 077A 0000 0724 0001 0034 0033 0338 0288 0707"); # from utracer
+#my $data = decode_measurement("10 077A 0000 0724 0001 0034 0033 0338 0288 0707"); # from utracer
 #my $data = decode_measurement("10 02B0 0043 02B4 0044 01DB 01DA 033A 0287 0303"); # from utracer
 
 # decode_measurement is feature-complete.
@@ -443,6 +496,9 @@ sub decode_measurement { # {{{
   # $compliance_error = $status_byte & 0x1 == 1;
 
   $data->{Vpsu} *= DECODE_TRACER * SCALE_VSU * CalVar5;
+
+  # update PSU voltage global
+  $VsupSystem = $data->{Vpsu};
 
   $data->{Va} *= DECODE_TRACER * DECODE_SCALE_VA * CalVar1;
   # VA is in reference to PSU, adjust
@@ -482,7 +538,7 @@ sub decode_measurement { # {{{
     $data->{Vs} = $data->{Vs} - (($data->{Is}) / 1000) * ScreenRs - (0.6 * CalVar7);
   }
 
-  if ($opts->{debug}) {
+  if ($opts->{verbose}) {
     printf "stat ____ia iacmp ____is _is_comp ____va ____vs _vPSU _vneg ia_gain is_gain\n";
     printf "% 4x % 6.1f % 5.1f % 6.1f % 8.1f % 6.1f % 6.1f % 2.1f % 2.1f % 7d % 7d\n", @{$data}{@measurement_fields};
   }
