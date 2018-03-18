@@ -1,6 +1,7 @@
 # common to all graphs
 reset
 load "common.gnu"
+set output ARG1.".svg"
 
 set title 'Transconductance'
 set xlabel 'Plate Current mA'
