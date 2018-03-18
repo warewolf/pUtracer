@@ -200,7 +200,7 @@ my $tubes = { # {{{
     "vf" => 12.6,
   },   # }}}
   "5751-rp" => { # {{{
-    "vg" => -3,
+    "vg" => -3.0,
     "va" => "125-375/20l",
     "vs" => "125-375/20l",
     "rp" => 5800,
@@ -210,7 +210,7 @@ my $tubes = { # {{{
     "vf" => 12.6,
   },   # }}}
   "5751-gm" => { # {{{
-    "vg" => -3,
+    "vg" => "-4-0/20l",
     "va" => 250,
     "vs" => 250,
     "rp" => 5800,
@@ -443,7 +443,7 @@ sub do_curve {
 		vf => $opts->{vf}->[$step] || $opts->{vf}->[0],
       );
       # name tube Vpsu Vmin Vg Va Va_meas Ia Ia_Raw Ia_Gain Vs Vs_meas Is Is_Raw Is_Gain Vf
-      $log->printf("%s\t%s\t%d\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n",
+      $log->printf("%s\t%s\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\n",
         $opts->{name},
         $opts->{tube},
         $point++,
