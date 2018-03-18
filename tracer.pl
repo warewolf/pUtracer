@@ -273,7 +273,7 @@ $tracer->stopbits(1);
 $tracer->read_const_time(10000);
 
 open(my $log,">>",$opts->{log});
-$log->printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",qw(Name Tube Vpsu Vmin Vg Va Va_Meas Ia Ia_Raw Ia_Gain Vs Vs_Meas Is Is_Raw Is_Gain Vf));
+$log->printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",qw(Name Tube Point Vpsu Vmin Vg Va Va_Meas Ia Ia_Raw Ia_Gain Vs Vs_Meas Is Is_Raw Is_Gain Vf));
 
 # turn args into measurement steps
 foreach my $arg (qw(vg va vs vf)) { # {{{
@@ -427,6 +427,7 @@ sub do_curve {
   #   00 - set settings again
   send_settings(compliance => $opts->{compliance}, averaging => $opts->{averaging}, gain_is => $opts->{gain}, gain_ia => $opts->{gain});
   #   10 - do measurement
+  my $point = 1;
   foreach my $vg_step (0 .. $#{$opts->{vg}}) { # {{{
     foreach my $step (0 ..  $#{$opts->{va}}) { # {{{
 
@@ -442,9 +443,10 @@ sub do_curve {
 		vf => $opts->{vf}->[$step] || $opts->{vf}->[0],
       );
       # name tube Vpsu Vmin Vg Va Va_meas Ia Ia_Raw Ia_Gain Vs Vs_meas Is Is_Raw Is_Gain Vf
-      $log->printf("%s\t%s\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n",
+      $log->printf("%s\t%s\t%d\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n",
         $opts->{name},
         $opts->{tube},
+        $point++,
         $measurement->{Vpsu},
         $measurement->{Vmin},
 		$opts->{vg}->[$vg_step],
