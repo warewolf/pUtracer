@@ -38,10 +38,10 @@ use constant {   # {{{
 # calibration
 use constant { # {{{
   CalVar1  => 1018/1000, # Va Gain
-  CalVar2  => 1008/1000, # Vs Gain
+  CalVar2  => 1018/1000, # Vs Gain
   CalVar3  =>  990/1000, # Ia Gain
-  CalVar4  =>  985/1000, # Is Gain
-  CalVar5  => 1011/1000, # VsupSystem
+  CalVar4  =>  990/1000, # Is Gain
+  CalVar5  => 1012.6/1000, # VsupSystem
   CalVar6  => 1014/1000, # Vgrid(40V)
   CalVar7  => 1000/1000, # VglowA, unused?
   CalVar8  => 1018/1000, # Vgrid(4V)
@@ -135,6 +135,9 @@ my $compliance_to_tracer = { # {{{
   0 =>  0x00,
 }; # }}}
 
+# rp = 1 / ( dIa / dVa )
+# gm = dIa / dVa
+
 my $tubes = { # {{{
   "resistor" => { # {{{
     "vg" => -1, # grid volts
@@ -145,6 +148,26 @@ my $tubes = { # {{{
     "gm" => 2.2,  # transconductance, in mA/V
     "mu" => 17,   # amplification factor
     "vf" => 0, # filament voltage (in series, not using center tap)
+  },   # }}}
+  "12au7-rp" => { # {{{
+    "vg" => -8.5, # grid volts
+    "va" => "125-375/20l",  # plate volts
+    "vs" => "125-375/20l",  # plate volts
+    "rp" => 7700, # plate resistance, in ohms
+    "ia" => 10.5, # plate current, in mA
+    "gm" => 2.2,  # transconductance, in mA/V
+    "mu" => 17,   # amplification factor
+    "vf" => 12.6, # filament voltage (in series, not using center tap)
+  },   # }}}
+  "12au7-gm" => { # {{{
+    "vg" => "-20-0/20l", # grid volts
+    "va" => "250",  # plate volts
+    "vs" => "250",  # plate volts
+    "rp" => 7700, # plate resistance, in ohms
+    "ia" => 10.5, # plate current, in mA
+    "gm" => 2.2,  # transconductance, in mA/V
+    "mu" => 17,   # amplification factor
+    "vf" => 12.6, # filament voltage (in series, not using center tap)
   },   # }}}
   "12au7-quick" => { # {{{
     "vg" => -8.5, # grid volts
@@ -166,17 +189,27 @@ my $tubes = { # {{{
     "mu" => 100,
     "vf" => 12.6,
   },   # }}}
-  "12ax7-dangerous-this-will-destroy-your-tube" => { # {{{
-    "vg" => "-5-0/5",
-    "va" => "50-300/5",
-    "vs" => "50-300/5",
-    "rp" => 6250,
-    "ia" => 1.2,
+  "5751-quick" => { # {{{
+    "vg" => -3,
+    "va" => 250,
+    "vs" => 250,
+    "rp" => 5800,
+    "ia" => 1.0,
     "gm" => 1.6,
-    "mu" => 100,
+    "mu" => 70,
     "vf" => 12.6,
   },   # }}}
-  "5751-quick" => { # {{{
+  "5751-rp" => { # {{{
+    "vg" => -3,
+    "va" => "125-375/20l",
+    "vs" => "125-375/20l",
+    "rp" => 5800,
+    "ia" => 1.0,
+    "gm" => 1.6,
+    "mu" => 70,
+    "vf" => 12.6,
+  },   # }}}
+  "5751-gm" => { # {{{
     "vg" => -3,
     "va" => 250,
     "vs" => 250,
@@ -190,10 +223,10 @@ my $tubes = { # {{{
 
 my $opts; $opts = {  # {{{
   device => "/dev/ttyUSB0",
+  settle => 10,
   debug => 0,
   verbose => 1,
   correction => 1,
-  steps => 0,
   compliance => 200,
   gain => "auto",
   averaging => "auto",
@@ -202,15 +235,16 @@ my $opts; $opts = {  # {{{
     $opts->{preset_name} = $_[1];
     $_[1] = "$_[1]-quick" if (! exists $tubes->{$_[1]});
     if (exists $tubes->{$_[1]}) {
-      map { $opts->{$_} = $tubes->{$_[1]}->{$_} } keys %{ $tubes->{$_[1]} }; 
-      $opts->{steps} = $tubes->{$_[1]}->{steps} if $tubes->{$_[1]}->{steps};
+      map { $opts->{$_} ||= $tubes->{$_[1]}->{$_} } keys %{ $tubes->{$_[1]} }; 
     } else {
       die "Don't know tube type $_[1]";
     }
   }, # }}}
 }; # }}}
 
-GetOptions($opts,"hot", # leave filiments on or not
+GetOptions($opts,
+  "hot!",  # expect filiments to be hot already
+  "warm!", # leave filiments on or not
   "debug",
   "verbose",
   "device=s", # serial device
@@ -220,6 +254,7 @@ GetOptions($opts,"hot", # leave filiments on or not
   # 
   "vg=s","va=s","vs=s","rp=f","ia=f","gm=f","mu=f","vf=s", # value override
   "compliance=i", # miliamps 
+  "settle=i", # settle delay after slow heating tube 
   "averaging=i", # averaging 
   "gain=i", # gain 
   "correction!", # low voltage correction
@@ -243,11 +278,17 @@ $log->printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 # turn args into measurement steps
 foreach my $arg (qw(vg va vs vf)) { # {{{
   my ($range,$steps) = split(m/\//,$opts->{$arg},2);
+  my ($log_mode) = 0;
   
   # steps may not exist, default to 0
   $steps = defined($steps) ? $steps: 0;
+
+  if (rindex($steps,"l")+1 == length($steps)) {
+    $log_mode++;
+    chop $steps;
+  }
   
-  my ($range_start,$range_end) = ($range =~ m/(-?[\d\.]+)(?:-(-?[\d\.]+))?/);
+  my ($range_start,$range_end) = ($range =~ m/(-?[\d\.]+)(?:-(-??[\d\.]+))?/);
 
   # range end may not exist, default to range start.
   $range_end = defined($range_end) ? $range_end : $range_start;
@@ -257,9 +298,18 @@ foreach my $arg (qw(vg va vs vf)) { # {{{
   
   # overwrite argument in $opts
   $opts->{$arg} = [];
+  print "width - $sweep_width start = $range_start\n";
+
   # add our stuff in.
-  push @{ $opts->{$arg} },$range_start+$step_size*$_ for (0..$steps);
+  if (! $log_mode) {
+    push @{ $opts->{$arg} },$range_start+$step_size*$_ for (0..$steps);
+  } else {
+    push @{ $opts->{$arg} }, $range_start;
+    push @{ $opts->{$arg} }, ($sweep_width ** ($_ * (1/ $steps)))+$range_start for (0 .. $steps);
+  }
 }  # }}}
+
+print Data::Dumper->Dump([@{$opts}{qw(vg va vs vf)}],[qw($vg $va $vs $vf)]);
 
 # rough guess as to what the system supply is supposed to be
 my $VsupSystem = 19.5;
@@ -281,19 +331,19 @@ sub getVa { # {{{ # getVa is done
 } # }}}
 
 sub getVs { # {{{ # getVs is done
-  my ($voltage) = @_;
+my ($voltage) = @_;
 
-  die "Voltage above 400v is not supported" if ($voltage > 400);
-  die "Voltage below 2v is not supported" if ($voltage < 2);
+die "Voltage above 400v is not supported" if ($voltage > 400);
+die "Voltage below 2v is not supported" if ($voltage < 2);
 
-  # voltage is in reference to supply voltage, adjust
-  $voltage+= $VsupSystem;
-  my $ret = $voltage * ENCODE_TRACER * ENCODE_SCALE_VS * CalVar2;
-  if ($ret > 1023) {
-    warn "Vs voltage too high, clamping";
-    $ret = 1023;
-  }
-  return $ret;
+# voltage is in reference to supply voltage, adjust
+$voltage+= $VsupSystem;
+my $ret = $voltage * ENCODE_TRACER * ENCODE_SCALE_VS * CalVar2;
+if ($ret > 1023) {
+  warn "Vs voltage too high, clamping";
+  $ret = 1023;
+}
+return $ret;
 } # }}}
 
 # also PWM, mapping a 0 - 5V to 0 - -50V, referenced from the system supply
@@ -301,7 +351,7 @@ sub getVg { # {{{ # getVg is done
   my ($voltage) = @_;
   my $cal;
 
-  if (abs($voltage) == $voltage) {
+  if ($voltage > 0) {
     die "Positive grid voltages, from the grid terminal are not supported.  Cheat with screen/anode terminal.";
   }
 
@@ -342,31 +392,45 @@ sub getVf { # {{{ # getVf is done
 do_curve();
 
 sub do_curve {
-  # 00 - all zeros turn everything off 
-  send_settings(compliance => 0, averaging => 0, gain_is => 0, gain_ia => 0);
+  # 00 - send settings w/ compliance, etc.
+  send_settings(
+	  compliance => $opts->{compliance},
+	  averaging  => $opts->{averaging},
+	  gain_is    => $opts->{gain},
+	  gain_ia    => $opts->{gain}
+  );
 
   # 50 - read out AD
   my $data = ping();
 
   # set filament
   # 40 - set fil voltage (repeated 10x) +=10% of voltage, once a second
-  if ($opts->{hot}) {
+  if ($opts->{hot}) { # {{{
     # "hot" mode - just set it to max
-	  set_filament($opts->{vf}->[-1]);
+	  set_filament(getVf($opts->{vf}->[-1]));
   } else {
     # cold mode - ramp it up slowly
 	foreach my $mult (1..10) {
-	  set_filament($mult* ( $opts->{vf}->[-1]/10));
+      my $voltage = $mult* ( $opts->{vf}->[-1]/10);
+      printf STDERR "Setting fil voltage to %2.1f\n",$voltage;
+	  set_filament(getVf($voltage));
 	  sleep 1;
 	}
+  } # }}}
+
+
+  if (! $opts->{hot}) {
+	printf "Sleeping for %d seconds for tube settle ...\n",$opts->{settle};
+	sleep $opts->{settle};
   }
 
-  #   00 - set settings
-  send_settings(compliance => 200, averaging => "auto", gain_is => "auto", gain_ia => "auto");
+  #   00 - set settings again
+  send_settings(compliance => $opts->{compliance}, averaging => $opts->{averaging}, gain_is => $opts->{gain}, gain_ia => $opts->{gain});
   #   10 - do measurement
-  foreach my $vg_step (0 .. $#{$opts->{vg}}) {
-    foreach my $step (0 ..  $#{$opts->{va}}) {
-	  printf("Measuring Vg: %d\tVa: %d\tVs: %d\tVf: %f\n",
+  foreach my $vg_step (0 .. $#{$opts->{vg}}) { # {{{
+    foreach my $step (0 ..  $#{$opts->{va}}) { # {{{
+
+	  printf("\nMeasuring Vg: %f\tVa: %f\tVs: %f\tVf: %f\n",
 		$opts->{vg}->[$vg_step],
 		$opts->{va}->[$step],
 		$opts->{vs}->[$step],
@@ -396,11 +460,23 @@ sub do_curve {
 		$measurement->{Gain_Is},
 		$opts->{vf}->[$step] || $opts->{vf}->[0],
       );
-    }
-  }
+    } # }}}
+  } # }}}
   # 30 -- end measurement
   end_measurement();
+  #reset_tracer();
+  
+  # Apparently, the uTracer needs a delay after a measurement cycle
+  sleep 10;
   # 00 - all zeros turn everything off 
+  # 40 turn off fil
+  set_filament(0) if (! $opts->{warm});
+  #send_settings(
+  #	  compliance => $opts->{compliance},
+  #	  averaging  => $opts->{averaging},
+  #	  gain_is    => $opts->{gain},
+  #	  gain_ia    => $opts->{gain}
+  #  );
 }
 
 #reset_tracer();
@@ -416,13 +492,11 @@ sub end_measurement { # {{{
   print "< $response\n" if ($opts->{debug});
   if ($response ne $string) { warn "uTracer returned $response, when I expected $string"; }
 } # }}}
+
 sub set_filament { # {{{
 
-  my ($voltage) =@_;
-  my $string = sprintf("%02X00000000%02X%02X%02X%02X",
-	CMD_FILAMENT,
-	0,0,0,$voltage
-  );
+  my ($voltage) =@_;  
+  my $string = sprintf("%02X000000000000%04X", CMD_FILAMENT, $voltage);
   print "> $string\n" if ($opts->{debug});;
   $tracer->write($string);
   my ($bytes,$response) = $tracer->read(18);
@@ -488,6 +562,7 @@ sub reset_tracer {
 }
 
 sub abort {
+  print "Aborting!\n";
   #reset_tracer();
   end_measurement();
   set_filament(0);
@@ -501,6 +576,7 @@ sub decode_measurement { # {{{
   @{$data}{@measurement_fields} = map {hex($_) } unpack("A2 A4 A4 A4 A4 A4 A4 A4 A4 A2 A2",$str);
 
   if ($data->{Status} == 0x11) {
+    warn "uTracer reports overcurrent!";
     abort();
   }
 
@@ -537,16 +613,16 @@ sub decode_measurement { # {{{
   # decode gain
   @{$data}{qw(Gain_Ia Gain_Is)} = map { $gain_from_tracer->{$_} } @{$data}{qw(Gain_Ia Gain_Is)};
 
-  # find max gain
-  my $gain = max @{$data}{qw(Gain_Ia Gain_Is)};
+  # find max gain # XXX NOTE: the uTracer can and will use different PGA gains for IA and IS!
+  #my $gain = max @{$data}{qw(Gain_Ia Gain_Is)};
 
   # undo gain amplification
-  $data->{Ia} /= $gain;
-  $data->{Is} /= $gain;
+  $data->{Ia} /= $data->{Gain_Ia};
+  $data->{Is} /= $data->{Gain_Is};
 
   # average
-  $data->{Ia} /= $gain_to_average->{$gain};
-  $data->{Is} /= $gain_to_average->{$gain};
+  $data->{Ia} /= $gain_to_average->{$data->{Gain_Ia}};
+  $data->{Is} /= $gain_to_average->{$data->{Gain_Is}};
 
   # correction - this appears to be backwards?
   if ($opts->{correction}) {
