@@ -151,8 +151,8 @@ my $tubes = { # {{{
   },   # }}}
   "12au7-rp" => { # {{{
     "vg" => -8.5, # grid volts
-    "va" => "125-375/20l",  # plate volts
-    "vs" => "125-375/20l",  # plate volts
+    "va" => "75-375/20l",  # plate volts
+    "vs" => "75-375/20l",  # plate volts
     "rp" => 7700, # plate resistance, in ohms
     "ia" => 10.5, # plate current, in mA
     "gm" => 2.2,  # transconductance, in mA/V
@@ -200,9 +200,9 @@ my $tubes = { # {{{
     "vf" => 12.6,
   },   # }}}
   "5751-rp" => { # {{{
-    "vg" => -3.0,
-    "va" => "125-375/20l",
-    "vs" => "125-375/20l",
+    "vg" => -2.5,
+    "va" => "150-375/20l",
+    "vs" => "150-375/20l",
     "rp" => 5800,
     "ia" => 1.0,
     "gm" => 1.6,
@@ -210,7 +210,7 @@ my $tubes = { # {{{
     "vf" => 12.6,
   },   # }}}
   "5751-gm" => { # {{{
-    "vg" => "-4-0/20l",
+    "vg" => "-5-0/20l",
     "va" => 250,
     "vs" => 250,
     "rp" => 5800,
@@ -615,8 +615,8 @@ sub decode_measurement { # {{{
   # decode gain
   @{$data}{qw(Gain_Ia Gain_Is)} = map { $gain_from_tracer->{$_} } @{$data}{qw(Gain_Ia Gain_Is)};
 
-  # find max gain # XXX NOTE: the uTracer can and will use different PGA gains for IA and IS!
-  #my $gain = max @{$data}{qw(Gain_Ia Gain_Is)};
+  # XXX NOTE: the uTracer can and will use different PGA gains for IA and IS!
+  warn("Ia gain ($data->{Gain_Ia}) and Is gain ($data->{Gain_Is}) do not match! Raw vaules: Ia = $data->{Ia}, Is = $data->{Is}") if ($data->{Gain_Ia} != $data->{Gain_Is});
 
   # undo gain amplification
   $data->{Ia} /= $data->{Gain_Ia};
