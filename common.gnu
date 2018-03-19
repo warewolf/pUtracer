@@ -1,6 +1,9 @@
 # common to all graphs
 set terminal svg size 800,600 fname 'Verdana' fsize 10
 
+set samples 100
+set isosamples 100
+
 # variables
 old_Va = NaN
 old_Vs = NaN
