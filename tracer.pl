@@ -9,6 +9,8 @@ use Pod::Usage;
 use Device::SerialPort;
 use List::Util qw(max);
 
+$|++;
+
 use constant {
   CMD_START        => 0x00,
   CMD_MEASURE      => 0x10,
@@ -38,9 +40,9 @@ use constant {   # {{{
 # calibration
 use constant { # {{{
   CalVar1  => 1018/1000, # Va Gain
-  CalVar2  => 1018/1000, # Vs Gain
+  CalVar2  => 1005/1000, # Vs Gain
   CalVar3  =>  990/1000, # Ia Gain
-  CalVar4  =>  990/1000, # Is Gain
+  CalVar4  =>  989/1000, # Is Gain
   CalVar5  => 1012.6/1000, # VsupSystem
   CalVar6  => 1014/1000, # Vgrid(40V)
   CalVar7  => 1000/1000, # VglowA, unused?
@@ -141,8 +143,8 @@ my $compliance_to_tracer = { # {{{
 my $tubes = { # {{{
   "resistor" => { # {{{
     "vg" => -1, # grid volts
-    "va" => "2-200/2",  # plate volts
-    "vs" => "2-200/2",  # plate volts
+    "va" => "2-400/20l",  # plate volts
+    "vs" => "2-400/20l",  # plate volts
     "rp" => 7700, # plate resistance, in ohms
     "ia" => 10.5, # plate current, in mA
     "gm" => 2.2,  # transconductance, in mA/V
@@ -469,6 +471,8 @@ sub do_curve {
   #reset_tracer();
   
   # Apparently, the uTracer needs a delay after a measurement cycle
+  $log->close();
+  printf "Sleeping\n";
   sleep 10;
   # 00 - all zeros turn everything off 
   # 40 turn off fil
@@ -601,12 +605,10 @@ sub decode_measurement { # {{{
   # VA is in reference to PSU, adjust
   $data->{Vs} -= $data->{Vpsu};
 
-  $data->{Ia} *= DECODE_TRACER * DECODE_SCALE_IA * CalVar3;
-
-  $data->{Is} *= DECODE_TRACER * DECODE_SCALE_IS * CalVar4;
+  $data->{Ia}     *= DECODE_TRACER * DECODE_SCALE_IA * CalVar3;
+  $data->{Is}     *= DECODE_TRACER * DECODE_SCALE_IS * CalVar4;
 
   $data->{Ia_Raw} *= DECODE_TRACER * DECODE_SCALE_IA * CalVar3;
-
   $data->{Is_Raw} *= DECODE_TRACER * DECODE_SCALE_IS * CalVar4;
 
   $data->{Vmin} = 5 * ((VminR1 + VminR2) / VminR1) * (( $data->{Vmin} / 1024) - 1);
@@ -615,16 +617,16 @@ sub decode_measurement { # {{{
   # decode gain
   @{$data}{qw(Gain_Ia Gain_Is)} = map { $gain_from_tracer->{$_} } @{$data}{qw(Gain_Ia Gain_Is)};
 
-  # XXX NOTE: the uTracer can and will use different PGA gains for IA and IS!
-  warn("Ia gain ($data->{Gain_Ia}) and Is gain ($data->{Gain_Is}) do not match! Raw vaules: Ia = $data->{Ia}, Is = $data->{Is}") if ($data->{Gain_Ia} != $data->{Gain_Is});
-
   # undo gain amplification
-  $data->{Ia} /= $data->{Gain_Ia};
-  $data->{Is} /= $data->{Gain_Is};
+  # XXX NOTE: the uTracer can and will use different PGA gains for Ia and Is!
+  $data->{Ia} = $data->{Ia} / $data->{Gain_Ia};
+  $data->{Is} = $data->{Is} / $data->{Gain_Is};
 
   # average
-  $data->{Ia} /= $gain_to_average->{$data->{Gain_Ia}};
-  $data->{Is} /= $gain_to_average->{$data->{Gain_Is}};
+  # XXX NOTE: the uTracer can and will use different PGA gains for Ia and Is!  Averaging is global though.
+  my $averaging = $gain_to_average->{$data->{Gain_Ia}} > $gain_to_average->{$data->{Gain_Is}} ? $gain_to_average->{$data->{Gain_Ia}} : $gain_to_average->{$data->{Gain_Is}};
+  $data->{Ia} = $data->{Ia} / $averaging;
+  $data->{Is} = $data->{Is} / $averaging;
 
   # correction - this appears to be backwards?
   if ($opts->{correction}) {
