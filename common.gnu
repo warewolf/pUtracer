@@ -3,6 +3,8 @@ set terminal svg size 800,600 fname 'Verdana' fsize 10
 
 set samples 100
 set isosamples 100
+set key inside top left autotitle columnhead
+
 
 # variables
 old_Va = NaN
@@ -31,8 +33,6 @@ plate_resistance(rp_Va, rp_Ia) = ( rp_Va / rp_Ia  )
 transconductance(gm_Ia,gm_Vg) = ( gm_Ia / gm_Vg  )
 
 set datafile separator "\t"
-
-set key autotitle columnhead
 
 set xtics
 set ytics
