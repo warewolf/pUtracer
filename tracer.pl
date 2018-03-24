@@ -678,7 +678,7 @@ sub quicktest_triode { # {{{
   end_measurement();
 
   # Apparently, the uTracer needs a delay after a measurement cycle
-  $log->printf("\n");
+  $log->printf("\n\n");
   $log->close();
   printf "Sleeping for $opts->{calm} seconds\n";
   sleep $opts->{calm};
@@ -768,7 +768,7 @@ sub do_curve { # {{{
   #reset_tracer();
   
   # Apparently, the uTracer needs a delay after a measurement cycle
-  $log->printf("\n");
+  $log->printf("\n\n");
   $log->close();
   printf "Sleeping for $opts->{calm} seconds\n";
   sleep $opts->{calm};
