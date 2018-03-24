@@ -206,7 +206,7 @@ my $tubes = { # {{{
     "vg" => -3,
     "va" => 250,
     "vs" => 250,
-    "rp" => 5.8,
+    "rp" => 58,
     "ia" => 1.0,
     "gm" => 1.6,
     "mu" => 70,
@@ -240,7 +240,7 @@ my $opts; $opts = {  # {{{
   calm => 6, # sleep after measurement sequences for this long (helps prevent uTracer lockup)
   settle => 10,
   debug => 0,
-  verbose => 1,
+  verbose => 0,
   correction => 1,
   compliance => 200,
   gain => "auto",
@@ -372,7 +372,7 @@ return $ret;
 sub getVg { # {{{ # getVg is done
   my ($voltage) = @_;
 
-  my $Vsat = 2 * CalVar9 - 1;
+  my $Vsat = 2 * (CalVar9 - 1);
   my ($X1,$Y1,$X2,$Y2);
   if (abs($voltage) <= 4) {
     $X1 = $Vsat;
@@ -407,34 +407,6 @@ sub getVg { # {{{ # getVg is done
   return $ret;
 } # }}}
 
-sub getVg_old { # {{{ # getVg is done
-  my ($voltage) = @_;
-  my $cal;
-
-  if ($voltage > 0) {
-    die "Positive grid voltages, from the grid terminal are not supported.  Cheat with screen/anode terminal.";
-  }
-
-  if (abs($voltage) > 4) { # {{{
-    $cal = CalVar6;
-  } else {
-    $cal = CalVar8;
-  } # }}}
-  
-  my $ret = ENCODE_SCALE_VG * $voltage * $cal;
-
-  if ($ret > 1023) {
-    warn "Grid voltage too high, clamping to max";
-    $ret = 1023;
-  }
-
-  if ($ret < 0) {
-    warn  "Grid voltage too low, clamping to min";
-    $ret = 0;
-  }
-
-  return $ret;
-} # }}}
 sub getVf { # {{{ # getVf is done
   my ($voltage) = @_;
   my $ret = 1024 * ( $voltage ** 2) / ($VsupSystem **2) * CalVar5;
@@ -459,7 +431,30 @@ if (! $opts->{quicktest} || $opts->{"quicktest-pentode"}) {
   die "lolwat"
 }
 
+sub warmup_tube {
+  if ($opts->{hot}) { # {{{
+    # "hot" mode - just set it to max
+	  set_filament(getVf($opts->{vf}->[-1]));
+  } else {
+    # cold mode - ramp it up slowly
+    printf STDERR "Tube heating..\n";
+	foreach my $mult (1..10) {
+      my $voltage = $mult* ( $opts->{vf}->[-1]/10);
+      printf STDERR "Setting fil voltage to %2.1f\n",$voltage if ($opts->{verbose});
+	  set_filament(getVf($voltage));
+	  sleep 1;
+	}
+  } # }}}
+
+  if (! $opts->{hot}) { # {{{
+	printf "Sleeping for %d seconds for tube settle ...\n",$opts->{settle} if ($opts->{verbose});
+	sleep $opts->{settle};
+  } # }}}
+  printf STDERR "Tube heated.\n";
+}
+
 sub quicktest_triode { # {{{
+  printf STDERR "Running quicktest...\n";
   # print log header
   $log->printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",qw(Name Tube Point Vpsu Vmin Vg Va Va_Meas Ia Ia_Raw Ia_Gain Vs Vs_Meas Is Is_Raw Is_Gain Vf));
 
@@ -476,23 +471,7 @@ sub quicktest_triode { # {{{
 
   # set filament
   # 40 - set fil voltage (repeated 10x) +=10% of voltage, once a second
-  if ($opts->{hot}) { # {{{
-    # "hot" mode - just set it to max
-	  set_filament(getVf($opts->{vf}->[-1]));
-  } else {
-    # cold mode - ramp it up slowly
-	foreach my $mult (1..10) {
-      my $voltage = $mult* ( $opts->{vf}->[-1]/10);
-      printf STDERR "Setting fil voltage to %2.1f\n",$voltage;
-	  set_filament(getVf($voltage));
-	  sleep 1;
-	}
-  } # }}}
-
-  if (! $opts->{hot}) { # {{{
-	printf "Sleeping for %d seconds for tube settle ...\n",$opts->{settle};
-	sleep $opts->{settle};
-  } # }}}
+  warmup_tube();
 
   # do the five measurements for a triode http://dos4ever.com/uTracerlog/tubetester2.html#quicktest
   # theory explained here https://wtfamps.wordpress.com/mugmrp/
@@ -541,7 +520,7 @@ sub quicktest_triode { # {{{
   my @results;
   my $count=1;
   foreach my $point (@todo) { 
-	printf("\nMeasuring Vg: %f\tVa: %f\tVs: %f\tVf: %f\n", $point->{vg}, $point->{va}, $point->{vs}, $opts->{vf}->[0]);
+	printf("\nMeasuring Vg: %f\tVa: %f\tVs: %f\tVf: %f\n", $point->{vg}, $point->{va}, $point->{vs}, $opts->{vf}->[0]) if ($opts->{verbose});
 	my $measurement = do_measurement(
 	  vg => $point->{vg},
 	  va => $point->{va},
@@ -550,7 +529,7 @@ sub quicktest_triode { # {{{
 	);
     $measurement->{Vg} = $point->{vg};
     push @results,$measurement;
-      $log->printf("%s\t%s\t%df\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\n", # {{{
+      $log->printf("%s\t%s\t%d\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\n", # {{{
         $opts->{name},
         $opts->{tube},
         $count++,
@@ -671,7 +650,7 @@ sub quicktest_triode { # {{{
     $MuA, ($MuA/$opts->{mu})*100
   );
   $log->printf("# SECTION SCREEN\n#\n");
-  $log->printf("# Test Conditions: Vs: %dv @ %d %%, Vg: %dv @ %d %%\n#\n", $opts->{vs},$opts->{offset}, $opts->{vg}, $opts->{offset});
+  $log->printf("# Test Conditions: Vs: %dv @ %d %%, Vg: %dv @ %d %%\n#\n", $opts->{vs}->[0],$opts->{offset}, $opts->{vg}, $opts->{offset});
   # XXX FIXME do I need to make $opts->{ia} and $opts->{is} for expected anode and screen currents for pentodes?
   $log->printf("# Test Results: Is: %2.2f mA (%d%%), Rs %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n", $center->{Is}, ($center->{Is}/$opts->{ia})*100, $RpA, ($RpA/$opts->{rp})*100, $GmA, ($GmA/$opts->{gm})*100, $MuA, ($MuA/$opts->{mu})*100 );
 
@@ -680,7 +659,7 @@ sub quicktest_triode { # {{{
   # Apparently, the uTracer needs a delay after a measurement cycle
   $log->printf("\n\n");
   $log->close();
-  printf "Sleeping for $opts->{calm} seconds\n";
+  printf "Sleeping for $opts->{calm} seconds for uTracer\n";
   sleep $opts->{calm};
   # 00 - all zeros turn everything off 
   # 40 turn off fil
@@ -690,7 +669,7 @@ sub quicktest_triode { # {{{
 sub do_curve { # {{{
   # print log header
   $log->printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%2.2f\n",qw(Name Tube Point Vpsu Vmin Vg Va Va_Meas Ia Ia_Raw Ia_Gain Vs Vs_Meas Is Is_Raw Is_Gain Vf));
-
+  printf STDERR "Preparing to run curve...\n";
   # 00 - send settings w/ compliance, etc.
   send_settings( # {{{
 	  compliance => $opts->{compliance},
@@ -704,29 +683,14 @@ sub do_curve { # {{{
 
   # set filament
   # 40 - set fil voltage (repeated 10x) +=10% of voltage, once a second
-  if ($opts->{hot}) { # {{{
-    # "hot" mode - just set it to max
-	  set_filament(getVf($opts->{vf}->[-1]));
-  } else {
-    # cold mode - ramp it up slowly
-	foreach my $mult (1..10) {
-      my $voltage = $mult* ( $opts->{vf}->[-1]/10);
-      printf STDERR "Setting fil voltage to %2.1f\n",$voltage;
-	  set_filament(getVf($voltage));
-	  sleep 1;
-	}
-  } # }}}
-
-  if (! $opts->{hot}) { # {{{
-	printf "Sleeping for %d seconds for tube settle ...\n",$opts->{settle};
-	sleep $opts->{settle};
-  } # }}}
+  warmup_tube();
 
   #   00 - set settings again
   send_settings(compliance => $opts->{compliance}, averaging => $opts->{averaging}, gain_is => $opts->{gain}, gain_ia => $opts->{gain});
 
   #   10 - do measurement
   my $point = 1;
+  printf STDERR "Running curve measurements...\n";
   foreach my $vg_step (0 .. $#{$opts->{vg}}) { # {{{
     foreach my $step (0 ..  $#{$opts->{va}}) { # {{{
 
@@ -764,13 +728,14 @@ sub do_curve { # {{{
     } # }}}
   } # }}}
   # 30 -- end measurement
+  printf STDERR "...done\n";
   end_measurement();
   #reset_tracer();
   
   # Apparently, the uTracer needs a delay after a measurement cycle
   $log->printf("\n\n");
   $log->close();
-  printf "Sleeping for $opts->{calm} seconds\n";
+  printf "Sleeping for $opts->{calm} seconds for uTracer\n";
   sleep $opts->{calm};
   # 00 - all zeros turn everything off 
   # 40 turn off fil
