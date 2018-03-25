@@ -542,7 +542,7 @@ sub quicktest_triode { # {{{
 		$measurement->{Ia_Raw},
 		$measurement->{Gain_Ia},
 		$point->{vs},
-		$measurement->{Vs},
+		$measurement->{Vs_Meas},
 		$measurement->{Is},
 		$measurement->{Is_Raw},
 		$measurement->{Gain_Is},
@@ -647,12 +647,17 @@ sub quicktest_triode { # {{{
     $center->{Ia}, ($center->{Ia}/$opts->{ia})*100,
     $RpA, ($RpA/$opts->{rp})*100,
     $GmA, ($GmA/$opts->{gm})*100,
-    $MuA, ($MuA/$opts->{mu})*100
+    $MuA, ($MuA/$opts->{mu})*100,
   );
   $log->printf("# SECTION SCREEN\n#\n");
   $log->printf("# Test Conditions: Vs: %dv @ %d %%, Vg: %dv @ %d %%\n#\n", $opts->{vs}->[0],$opts->{offset}, $opts->{vg}, $opts->{offset});
   # XXX FIXME do I need to make $opts->{ia} and $opts->{is} for expected anode and screen currents for pentodes?
-  $log->printf("# Test Results: Is: %2.2f mA (%d%%), Rs %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n", $center->{Is}, ($center->{Is}/$opts->{ia})*100, $RpA, ($RpA/$opts->{rp})*100, $GmA, ($GmA/$opts->{gm})*100, $MuA, ($MuA/$opts->{mu})*100 );
+  $log->printf("# Test Results: Is: %2.2f mA (%d%%), Rs %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n",
+    $center->{Is}, ($center->{Is}/$opts->{ia})*100,
+    $RpS, ($RpS/$opts->{rp})*100,
+    $GmS, ($GmS/$opts->{gm})*100,
+    $MuS, ($MuS/$opts->{mu})*100,
+  );
 
   end_measurement();
 
