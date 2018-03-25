@@ -21,6 +21,11 @@ plot \
   $datablock index 0 using 1:2 with lines title "Ia", \
   $datablock index 1 using 1:2 with lines title "Is", \
 
+unset xrange
+unset yrange
+set xrange [0:]
+set yrange [0:]
+
 set xlabel 'Plate Current mA'
 set ylabel 'Plate Resistance kOhm'
 set output ARG1."-resistance.svg"
