@@ -629,7 +629,7 @@ sub quicktest_triode { # {{{
     my ($max_is) = map { $_->{Is} } sort { $a->{Is} > $b->{Is} } grep { $_->{Vg} == $Vg && $_->{Vs} == $max_vs } @results;
     my ($min_is) = map { $_->{Is} } sort { $a->{Is} < $b->{Is} } grep { $_->{Vg} == $Vg && $_->{Vs} == $min_vs } @results;
     my $delta_is = $max_is - $min_is;
-    $RpS += $delta_is / $delta_is;
+    $RpS += $delta_vs / $delta_is;
   } # }}}
   # average the two Vg voltage Rp measurements together
   $RpS /= 2;
@@ -650,7 +650,7 @@ sub quicktest_triode { # {{{
     $MuA, ($MuA/$opts->{mu})*100,
   );
   $log->printf("# SECTION SCREEN\n#\n");
-  $log->printf("# Test Conditions: Vs: %dv @ %d %%, Vg: %dv @ %d %%\n#\n", $opts->{vs}->[0],$opts->{offset}, $opts->{vg}, $opts->{offset});
+  $log->printf("# Test Conditions: Vs: %dv @ %d %%, Vg: %dv @ %d %%\n#\n", $opts->{vs}->[0],$opts->{offset}, $opts->{vg}->[0], $opts->{offset});
   # XXX FIXME do I need to make $opts->{ia} and $opts->{is} for expected anode and screen currents for pentodes?
   $log->printf("# Test Results: Is: %2.2f mA (%d%%), Rs %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n",
     $center->{Is}, ($center->{Is}/$opts->{ia})*100,
