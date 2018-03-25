@@ -208,7 +208,7 @@ my $tubes = { # {{{
     "vs" => 250,
     "rp" => 58,
     "ia" => 1.0,
-    "gm" => 1.6,
+    "gm" => 1.2,
     "mu" => 70,
     "vf" => 12.6,
   },   # }}}
@@ -218,7 +218,7 @@ my $tubes = { # {{{
     "vs" => "150-375/20l",
     "rp" => 5.8,
     "ia" => 1.0,
-    "gm" => 1.6,
+    "gm" => 1.2,
     "mu" => 70,
     "vf" => 12.6,
   },   # }}}
@@ -228,7 +228,7 @@ my $tubes = { # {{{
     "vs" => 250,
     "rp" => 5.8,
     "ia" => 1.0,
-    "gm" => 1.6,
+    "gm" => 1.2,
     "mu" => 70,
     "vf" => 12.6,
   },   # }}}
@@ -538,7 +538,7 @@ sub quicktest_triode { # {{{
 		$point->{vg},
 		$point->{va},
 		$measurement->{Va_Meas},
-		$measurement->{Ia_Meas},
+		$measurement->{Ia},
 		$measurement->{Ia_Raw},
 		$measurement->{Gain_Ia},
 		$point->{vs},
