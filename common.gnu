@@ -1,10 +1,12 @@
 # common to all graphs
-set terminal svg size 800,600 fname 'Verdana' fsize 10
+#set terminal svg size 800,600 fname 'Verdana' fsize 12
+set termoption dash
+set terminal png size 800,600
+EXTENSION=png
 
-set samples 100
-set isosamples 100
+set samples 25
+set isosamples 25
 set key inside top left autotitle columnhead
-
 
 # variables
 old_Va = NaN
@@ -39,3 +41,8 @@ set ytics
 set mxtics 10
 set mytics 10
 set grid x y xtics ytics mxtics mytics
+
+set for [i=1:5] linetype i dt i
+
+set linetype 1 dt 1 linecolor rgb "red"     linewidth 2
+set linetype 2 dt 2 linecolor rgb "green"   linewidth 2

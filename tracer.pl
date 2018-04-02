@@ -642,17 +642,17 @@ sub quicktest_triode { # {{{
   $log->printf("\n# %s  pUTracer3 400V CLI, V%s Triode Quick Test\n#\n", strftime("%m/%d/%Y %I:%m:%S %p",localtime()), $VERSION);
   $log->printf("# %s %s\n#\n",$opts->{tube}, $opts->{name});
   $log->printf("# SECTION ANODE\n#\n");
-  $log->printf("# Test Conditions: Va: %dv @ %d %%, Vg: %dv @ %d %%\n#\n", $opts->{va}->[0],$opts->{offset}, $opts->{vg}->[0], $opts->{offset});
-  $log->printf("# Test Results: Ia: %2.2f mA (%d%%), Ra %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n",
+  $log->printf("# Test Conditions: Va: %dv @ %d %%, Vg: %1.1fv @ %d %%\n#\n", $opts->{va}->[0],$opts->{offset}, $opts->{vg}->[0], $opts->{offset});
+  $log->printf("# Test Results: Ia: %2.2f mA (%d%%), Ra: %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n",
     $center->{Ia}, ($center->{Ia}/$opts->{ia})*100,
     $RpA, ($RpA/$opts->{rp})*100,
     $GmA, ($GmA/$opts->{gm})*100,
     $MuA, ($MuA/$opts->{mu})*100,
   );
   $log->printf("# SECTION SCREEN\n#\n");
-  $log->printf("# Test Conditions: Vs: %dv @ %d %%, Vg: %dv @ %d %%\n#\n", $opts->{vs}->[0],$opts->{offset}, $opts->{vg}->[0], $opts->{offset});
+  $log->printf("# Test Conditions: Vs: %dv @ %d %%, Vg: %1.1fv @ %d %%\n#\n", $opts->{vs}->[0],$opts->{offset}, $opts->{vg}->[0], $opts->{offset});
   # XXX FIXME do I need to make $opts->{ia} and $opts->{is} for expected anode and screen currents for pentodes?
-  $log->printf("# Test Results: Is: %2.2f mA (%d%%), Rs %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n",
+  $log->printf("# Test Results: Is: %2.2f mA (%d%%), Rs: %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n",
     $center->{Is}, ($center->{Is}/$opts->{ia})*100,
     $RpS, ($RpS/$opts->{rp})*100,
     $GmS, ($GmS/$opts->{gm})*100,
