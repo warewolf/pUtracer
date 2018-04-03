@@ -1,4 +1,5 @@
 SELECT 
+  hunt.tube_type as tube_type,
   hunt.reference_serial as reference_tube, hunt.match_serial as matching_tube,
 round(hunt.delta_ia+hunt.delta_is+hunt.delta_ra+hunt.delta_rs+hunt.delta_gma+hunt.delta_gms+hunt.delta_mua+hunt.delta_mus) AS score,
   hunt.'ref_ia' as 'ref_ia', hunt.'match_ia' as 'match_ia',
@@ -11,6 +12,7 @@ round(hunt.delta_ia+hunt.delta_is+hunt.delta_ra+hunt.delta_rs+hunt.delta_gma+hun
   hunt.'ref_mus' as 'ref_mus', hunt.'match_mus' as 'match_mus'
 FROM (
   SELECT
+    ref.'type' as 'tube_type',
     ref.'serial' as reference_serial,
     match.'serial' as match_serial,
     ABS(match.'ia'-ref.'ia') * ABS(match.'ia'-ref.'ia') AS delta_ia,
