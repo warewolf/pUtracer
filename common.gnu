@@ -2,7 +2,7 @@
 #set terminal svg size 800,600 fname 'Verdana' fsize 12
 set termoption dash
 set terminal png size 800,600
-EXTENSION=png
+EXTENSION="png"
 
 set samples 25
 set isosamples 25
