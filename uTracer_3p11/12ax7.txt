@@ -1,0 +1,30 @@
+5/10/2018 7:04:30 PM   uTracer3, GUI  V3.11  Triode Quick Test
+ 
+
+ 
+SECTION 1
+ 
+Test conditions:
+Va  : 250 (V)                Swing +/- 25 V (10%)
+Vg  : -10 (V)                Swing +/- 1 V (10%)
+ 
+Test results:
+Ia  : 0 (mA)                                                     
+Ra  : > 1M (kohm)                                               Ra = dVa/dIa
+Gm  : 0 (uA/V)                                                  Gm = dIa/dVg
+mu  : N.A. (-)                                                  mu = Gm*Ra
+ 
+ 
+SECTION 2
+ 
+Test conditions:
+Va  : 250 (V)                Swing +/- 25 V (10%)
+Vg  : -10 (V)                Swing +/- 1 V (10%)
+ 
+Test results:
+Ia  : 0 (mA)                                                     
+Ra  : > 1M (kohm)                                               Ra = dVa/dIa
+Gm  : -1 (uA/V)                                                 Gm = dIa/dVg
+mu  : N.A. (-)                                                  mu = Gm*Ra
+ 
+ 
