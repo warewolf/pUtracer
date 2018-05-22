@@ -1,1 +1,7 @@
 .project
+data
+*.csv
+*.png
+*.pdf
+*.orig
+*.sq3

@@ -1,7 +1,8 @@
 #!/usr/bin/perl
 # vim: foldmethod=marker ts=4 sw=2 commentstring=\ #\ %s
-
+$|++;
 use strict;
+use v5.10;
 use warnings;
 use Getopt::Long;
 use Data::Dumper;
@@ -11,242 +12,19 @@ use List::Util qw(max first);
 use POSIX qw(strftime);
 my $VERSION = "0.0.1";
 use Carp::Always;
+use Config::General;
+use File::Basename;
+use lib dirname (__FILE__);
+use uTracerConstants;
 
-$|++;
-# commands http://dos4ever.com/uTracerlog/tubetester2.html#protocol
-use constant { # {{{
-  CMD_START        => 0x00,
-  CMD_MEASURE      => 0x10,
-  CMD_MEASURE_HOLD => 0x20,    # for magic eye?  ... Yes.  This holds voltage on terminals until the next command.  Kinda dangerous.
-  CMD_END          => 0x30,
-  CMD_FILAMENT     => 0x40,
-  CMD_PING         => 0x50
-}; # }}}
+my $cfg = Config::General->new("app.ini");
+my %config  = $cfg->getall();
 
-# Resistors in voltage dividers, 400V version.  These are not correct for other versions.
-# values mostly taken from VB code provided by Ronald:
-#   http://www.dos4ever.com/uTracer3/code_blocks1.txt
-#   http://www.dos4ever.com/uTracer3/code_blocks2.txt
-use constant {   # {{{
-  AnodeR1 => 5_230,   # R32
-  AnodeR2 => 470_000, # R33
-  AnodeRs => 17.8,    # R45 ... actually 18 ohm, but we cheat w/ 17.8 for correction http://dos4ever.com/uTracerlog/tubetester2.html#examples
-  #
-  ScreenR1 => 5_230,   # R18
-  ScreenR2 => 470_000, # R19
-  ScreenRs => 17.8,    # R20 ... actually 18 ohm, but we cheat w/ 17.8 for correction http://dos4ever.com/uTracerlog/tubetester2.html#examples
-  #
-  VsupR1 => 1_800, # R44
-  VsupR2 => 6_800, # R43
-  #
-  VminR1 => 2_000, # R3 (-15v supply)
-  VminR2 => 47_000 # R4 (-15v supply)
-}; # }}}
+my $opts = $config{options};
+my $cal = $config{calibration};
+my $tubes = $config{tubes};
 
-# calibration - got these from the UI, after calibration.
-use constant { # {{{
-  CalVar1  => 1018/1000, # Va Gain
-  CalVar2  => 1005/1000, # Vs Gain
-  CalVar3  =>  990/1000, # Ia Gain
-  CalVar4  =>  989/1000, # Is Gain
-  CalVar5  => 1012.6/1000, # VsupSystem
-  CalVar6  => 1014/1000, # Vgrid(40V)
-  CalVar7  => 1000/1000, # VglowA, unused in 400V version
-  CalVar8  => 1018/1000, # Vgrid(4V)
-  CalVar9  =>  996/1000, # Vgrid(sat) # low voltage grid calibration http://www.dos4ever.com/uTracer3/code_blocks2.txt
-  CalVar10 => 1000/1000, # VglowB, unused in 400V version
-}; # }}}
-
-# scale constants, 400V version
-#  ... so these are basically refactored versions of Ronald's formulas in his VB code
-#  ... once I got my head wrapped around what was being done, and why.
-#  ... this makes it easier in my head to take a response value and multiply it by a couple modifiers.
-use constant { # {{{
-  DECODE_SCALE_IA  => 1000 / AnodeRs,
-  DECODE_SCALE_IS  => 1000 / ScreenRs,
-  # 
-  # decode values from the tracer
-  DECODE_TRACER => 5/1024,
-  DECODE_SCALE_VA => (AnodeR1 + AnodeR2) / (AnodeR1 * CalVar1),
-  DECODE_SCALE_VS => (ScreenR1 + ScreenR2) / ( ScreenR1 * CalVar2),
-  #
-  # encode values to the tracer
-  ENCODE_TRACER => 1024/5,
-  ENCODE_SCALE_VA => AnodeR1 / (AnodeR1 + AnodeR2),
-  ENCODE_SCALE_VS => ScreenR1 / (ScreenR1 + ScreenR2),
-  ENCODE_SCALE_VG => 1023/50,
-  #
-  SCALE_VSU => (VsupR1+VsupR2)/VsupR1, # needs calibration scale
-}; # }}}
-
-# convert human averaging values to the values for the uTracer
-my $averaging_to_tracer = { # {{{
-  auto => 0x40,
-    32 => 0x20,
-    16 => 0x10,
-     8 => 0x08,
-     4 => 0x04,
-     2 => 0x02,
-     1 => 0x01,
-}; # }}}
-
-# decode gain from uTracer to a human readable value
-my $gain_from_tracer = { # {{{
-  0x08 => "auto",
-  0x07 => 200,
-  0x06 => 100,
-  0x05 => 50,
-  0x04 => 20,
-  0x03 => 10,
-  0x02 => 5,
-  0x01 => 2,
-  0x00 => 1,
-}; # }}}
-
-# Strike that, reverse it.  youtu.be/ZWJo2EZW8yU
-my $gain_to_tracer = {};
-@{$gain_to_tracer}{values %$gain_from_tracer} = keys %$gain_from_tracer;
-
-# measured current is divided by this, based on gain by default.
-my $gain_to_average = { # {{{
-  200 => 8,
-  100 => 4,
-   50 => 2,
-   20 => 2,
-   10 => 1,
-    5 => 1,
-    2 => 1,
-    1 => 1,
-}; # }}}
-
-# measurement response fields http://dos4ever.com/uTracerlog/tubetester2.html#protocol
-my @measurement_fields = qw(
- Status
-
-  Ia
-  Ia_Raw
-
-  Is
-  Is_Raw
-
-  Va_Meas
-  Vs_Meas
-  Vpsu
-  Vmin
-
-  Gain_Ia
-  Gain_Is
-);
-
-# mA measurement limits, aka compliance.  Values from code blocks.
-my $compliance_to_tracer = { # {{{
-  200 => 0x8F,
-  175 => 0x8C,
-  150 => 0xAD,
-  125 => 0xAB,
-  100 => 0x84,
-  75 => 0x81,
-  50 => 0xA4,
-  25 => 0xA2,
-  0 =>  0x00,
-}; # }}}
-
-my $tubes = { # {{{
-  "resistor" => { # {{{
-    "vg" => -1, # grid volts
-    "va" => "2-400/20l",  # plate volts
-    "vs" => "2-400/20l",  # plate volts
-    "rp" => 7.7, # plate resistance, in kohms
-    "ia" => 10.5, # plate current, in mA
-    "gm" => 2.2,  # transconductance, in mA/V
-    "mu" => 17,   # amplification factor
-    "vf" => 0, # filament voltage (in series, not using center tap)
-  },   # }}}
-  "12au7-rp" => { # {{{
-    "vg" => -8.5, # grid volts
-    "va" => "75-375/20l",  # plate volts
-    "vs" => "75-375/20l",  # plate volts
-    "rp" => 7.7, # plate resistance, in kohms
-    "ia" => 10.5, # plate current, in mA
-    "gm" => 2.2,  # transconductance, in mA/V
-    "mu" => 17,   # amplification factor
-    "vf" => 12.6, # filament voltage (in series, not using center tap)
-  },   # }}}
-  "12au7-gm" => { # {{{
-    "vg" => "-20-0/20l", # grid volts
-    "va" => "250",  # plate volts
-    "vs" => "250",  # plate volts
-    "rp" => 7.7, # plate resistance, in kohms
-    "ia" => 10.5, # plate current, in mA
-    "gm" => 2.2,  # transconductance, in mA/V
-    "mu" => 17,   # amplification factor
-    "vf" => 12.6, # filament voltage (in series, not using center tap)
-  },   # }}}
-  "12au7-quick" => { # {{{
-    "vg" => -8.5, # grid volts
-    "va" => 250,  # plate volts
-    "vs" => 250,  # plate volts
-    "rp" => 7.7, # plate resistance, in kohms
-    "ia" => 10.5, # plate current, in mA
-    "gm" => 2.2,  # transconductance, in mA/V
-    "mu" => 17,   # amplification factor
-    "vf" => 12.6, # filament voltage (in series, not using center tap)
-  },   # }}}
-  "12ax7-quick" => { # {{{
-    "vg" => -2,
-    "va" => 250,
-    "vs" => 250,
-    "rp" => 62.5,
-    "ia" => 1.2,
-    "gm" => 1.6,
-    "mu" => 100,
-    "vf" => 12.6,
-  },   # }}}
-  "5751-quick" => { # {{{
-    "vg" => -3,
-    "va" => 250,
-    "vs" => 250,
-    "rp" => 58,
-    "ia" => 1.0,
-    "gm" => 1.2,
-    "mu" => 70,
-    "vf" => 12.6,
-  },   # }}}
-  "5751-rp" => { # {{{
-    "vg" => -2.5,
-    "va" => "125-375/20l",
-    "vs" => "125-375/20l",
-    "rp" => 5.8,
-    "ia" => 1.0,
-    "gm" => 1.2,
-    "mu" => 70,
-    "vf" => 12.6,
-  },   # }}}
-  "5751-gm" => { # {{{
-    "vg" => "-5.5-0/20l",
-    "va" => 250,
-    "vs" => 250,
-    "rp" => 5.8,
-    "ia" => 1.0,
-    "gm" => 1.2,
-    "mu" => 70,
-    "vf" => 12.6,
-  },   # }}}
-}; # }}}
-
-# Option defaults.
-my $opts; $opts = {  # {{{
-  device => "/dev/ttyUSB0",
-  calm => 6, # sleep after measurement sequences for this long (helps prevent uTracer lockup)
-  settle => 10,
-  debug => 0,
-  verbose => 0,
-  correction => 1,
-  compliance => 200,
-  gain => "auto",
-  averaging => "auto",
-  offset=> 10, # quicktest offset percentage default 10%
-  preset => sub { # {{{
+$opts->{preset}  = sub { 
     $_[1] = lc $_[1];
     $opts->{preset_name} = $_[1];
     $_[1] = "$_[1]-quick" if (! exists $tubes->{$_[1]});
@@ -255,9 +33,10 @@ my $opts; $opts = {  # {{{
     } else {
       die "Don't know tube type $_[1].  Specify vf, vg, va, vs on the command line.";
     }
-  }, # }}}
-}; # }}}
+  };
 
+$Getopt::Long::autoabbrev = 1;
+$Getopt::Long::bundling   = 1;
 GetOptions($opts,
   "hot!",  # expect filiments to be hot already
   "warm!", # leave filiments on or not
@@ -284,8 +63,11 @@ GetOptions($opts,
 # Copy in tube name from preset, if not specified on the command line.
 $opts->{tube} ||= $opts->{preset_name};
 
+
 # connect to uTracer
-my $tracer = Device::SerialPort->new($opts->{device});
+my $comport = $opts->{device};
+say "Connecting to dev:'$comport'";
+my $tracer = Device::SerialPort->new($comport) || die "Can't open $comport: $!\n";
 $tracer->baudrate(9600);
 $tracer->parity("none");
 $tracer->databits(8);
@@ -343,7 +125,9 @@ sub getVa { # {{{ # getVa is done
   die "Voltage below 2v is not supported" if ($voltage < 2);
   # voltage is in reference to supply voltage, adjust
   $voltage += $VsupSystem;
-  my $ret = $voltage * ENCODE_TRACER * ENCODE_SCALE_VA * CalVar1;
+  
+  my $ret = $voltage * $ENCODE_TRACER * $ENCODE_SCALE_VA * $cal->{CalVar1};
+  
   if ($ret > 1023) {
     warn "Va voltage too high, clamping";
     $ret = 1023;
@@ -360,7 +144,7 @@ die "Voltage below 2v is not supported" if ($voltage < 2);
 
 # voltage is in reference to supply voltage, adjust
 $voltage+= $VsupSystem;
-my $ret = $voltage * ENCODE_TRACER * ENCODE_SCALE_VS * CalVar2;
+my $ret = $voltage * $ENCODE_TRACER * $ENCODE_SCALE_VS * $cal->{CalVar2};
 if ($ret > 1023) {
   warn "Vs voltage too high, clamping";
   $ret = 1023;
@@ -372,18 +156,18 @@ return $ret;
 sub getVg { # {{{ # getVg is done
   my ($voltage) = @_;
 
-  my $Vsat = 2 * (CalVar9 - 1);
+  my $Vsat = 2 * ($cal->{CalVar9} - 1);
   my ($X1,$Y1,$X2,$Y2);
   if (abs($voltage) <= 4) {
     $X1 = $Vsat;
     $Y1 = 0;
     $X2 = 4;
-    $Y2 = ENCODE_SCALE_VG * CalVar8 * CalVar6 * 4;
+    $Y2 = $ENCODE_SCALE_VG * $cal->{CalVar8} * $cal->{CalVar6} * 4;
   } else {
     $X1 = 4;
-    $Y1 = ENCODE_SCALE_VG * CalVar8 * CalVar6 * 4;
+    $Y1 = $ENCODE_SCALE_VG * $cal->{CalVar8} * $cal->{CalVar6} * 4;
     $X2 = 40;
-    $Y2 = ENCODE_SCALE_VG * CalVar6 * 40;
+    $Y2 = $ENCODE_SCALE_VG * $cal->{CalVar6} * 40;
   }
 
   my $AA = ($Y2 - $Y1) / ($X2 - $X1);
@@ -409,7 +193,7 @@ sub getVg { # {{{ # getVg is done
 
 sub getVf { # {{{ # getVf is done
   my ($voltage) = @_;
-  my $ret = 1024 * ( $voltage ** 2) / ($VsupSystem **2) * CalVar5;
+  my $ret = 1024 * ( $voltage ** 2) / ($VsupSystem **2) * $cal->{CalVar5};
   if ($ret > 1023) {
     warn sprintf("Requested filament voltage %f > 100%% PWM duty cycle, clamping to 100%%, %f.",$voltage,$VsupSystem);
     $ret = 1023;
@@ -758,7 +542,7 @@ sub do_curve { # {{{
 sub end_measurement { # {{{
   my (%args) = @_;
   my $string = sprintf("%02X00000000%02X%02X%02X%02X",
-    CMD_END, 0,0,0,0
+    $CMD_END, 0,0,0,0
   );
   print "> $string\n" if ($opts->{debug});;
   $tracer->write($string);
@@ -770,7 +554,7 @@ sub end_measurement { # {{{
 sub set_filament { # {{{
 
   my ($voltage) =@_;  
-  my $string = sprintf("%02X000000000000%04X", CMD_FILAMENT, $voltage);
+  my $string = sprintf("%02X000000000000%04X", $CMD_FILAMENT, $voltage);
   print "> $string\n" if ($opts->{debug});;
   $tracer->write($string);
   my ($bytes,$response) = $tracer->read(18);
@@ -780,7 +564,7 @@ sub set_filament { # {{{
 
 sub ping { # {{{
   my $string = sprintf("%02X00000000%02X%02X%02X%02X",
-    CMD_PING,
+    $CMD_PING,
     0,0,0,0
   );
   print "> $string\n" if ($opts->{debug});;
@@ -798,11 +582,11 @@ sub ping { # {{{
 sub send_settings { # {{{
   my (%args) = @_;
   my $string = sprintf("%02X00000000%02X%02X%02X%02X",
-    CMD_START,
-    $compliance_to_tracer->{$args{compliance}},
-    $averaging_to_tracer->{$args{averaging}} || 0,
-    $gain_to_tracer->{$args{gain_is}} || 0,
-    $gain_to_tracer->{$args{gain_ia}} || 0,
+    $CMD_START,
+    $compliance_to_tracer{$args{compliance}},
+    $averaging_to_tracer{$args{averaging}} || 0,
+    $gain_to_tracer{$args{gain_is}} || 0,
+    $gain_to_tracer{$args{gain_ia}} || 0,
   );
   print "> $string\n" if ($opts->{debug});;
   $tracer->write($string);
@@ -814,7 +598,7 @@ sub send_settings { # {{{
 sub do_measurement { # {{{
   my (%args) = @_;
   my $string = sprintf("%02X%04X%04X%04X%04X",
-    CMD_MEASURE,
+    $CMD_MEASURE,
     getVa($args{va}),
     getVs($args{vs}),
     getVg($args{vg}),
@@ -859,30 +643,30 @@ sub decode_measurement { # {{{
     abort();
   }
 
-  $data->{Vpsu} *= DECODE_TRACER * SCALE_VSU * CalVar5;
+  $data->{Vpsu} *= $DECODE_TRACER * $SCALE_VSU * $cal->{CalVar5};
 
   # update PSU voltage global
   $VsupSystem = $data->{Vpsu};
 
-  $data->{Va_Meas} *= DECODE_TRACER * DECODE_SCALE_VA; # * CalVar1;
+  $data->{Va_Meas} *= $DECODE_TRACER * $DECODE_SCALE_VA; # * CalVar1;
   # Va is in reference to PSU, adjust
   $data->{Va_Meas} -= $data->{Vpsu};
 
-  $data->{Vs_Meas} *= DECODE_TRACER * DECODE_SCALE_VS; # * CalVar2;
+  $data->{Vs_Meas} *= $DECODE_TRACER * $DECODE_SCALE_VS; # * CalVar2;
   # Vs is in reference to PSU, adjust
   $data->{Vs_Meas} -= $data->{Vpsu};
 
-  $data->{Ia}     *= DECODE_TRACER * DECODE_SCALE_IA * CalVar3;
-  $data->{Is}     *= DECODE_TRACER * DECODE_SCALE_IS * CalVar4;
+  $data->{Ia}     *= $DECODE_TRACER * $DECODE_SCALE_IA * $cal->{CalVar3};
+  $data->{Is}     *= $DECODE_TRACER * $DECODE_SCALE_IS * $cal->{CalVar4};
 
-  $data->{Ia_Raw} *= DECODE_TRACER * DECODE_SCALE_IA * CalVar3;
-  $data->{Is_Raw} *= DECODE_TRACER * DECODE_SCALE_IS * CalVar4;
+  $data->{Ia_Raw} *= $DECODE_TRACER * $DECODE_SCALE_IA * $cal->{CalVar3};
+  $data->{Is_Raw} *= $DECODE_TRACER * $DECODE_SCALE_IS * $cal->{CalVar4};
 
-  $data->{Vmin} = 5 * ((VminR1 + VminR2) / VminR1) * (( $data->{Vmin} / 1024) - 1);
+  $data->{Vmin} = 5 * (($VminR1 + $VminR2) / $VminR1) * (( $data->{Vmin} / 1024) - 1);
   $data->{Vmin} += 5;
 
   # decode gain
-  @{$data}{qw(Gain_Ia Gain_Is)} = map { $gain_from_tracer->{$_} } @{$data}{qw(Gain_Ia Gain_Is)};
+  @{$data}{qw(Gain_Ia Gain_Is)} = map { $gain_from_tracer{$_} } @{$data}{qw(Gain_Ia Gain_Is)};
 
   # undo gain amplification
   # XXX NOTE: the uTracer can and will use different PGA gains for Ia and Is!
@@ -891,13 +675,14 @@ sub decode_measurement { # {{{
 
   # average
   # XXX NOTE: the uTracer can and will use different PGA gains for Ia and Is!  Averaging is global though.
-  my $averaging = $gain_to_average->{$data->{Gain_Ia}} > $gain_to_average->{$data->{Gain_Is}} ? $gain_to_average->{$data->{Gain_Ia}} : $gain_to_average->{$data->{Gain_Is}};
+  my $averaging = $gain_to_average{$data->{Gain_Ia}} > 
+    $gain_to_average{$data->{Gain_Is}} ? $gain_to_average{$data->{Gain_Ia}} : $gain_to_average{$data->{Gain_Is}};
   $data->{Ia} /= $averaging;
   $data->{Is} /= $averaging;
 
   if ($opts->{correction}) {
-    $data->{Va_Meas} = $data->{Va_Meas} - (($data->{Ia}) / 1000) * AnodeRs - (0.6 * CalVar7);
-    $data->{Vs_Meas} = $data->{Vs_Meas} - (($data->{Is}) / 1000) * ScreenRs - (0.6 * CalVar7);
+    $data->{Va_Meas} = $data->{Va_Meas} - (($data->{Ia}) / 1000) * $AnodeRs - (0.6 * $cal->{CalVar7});
+    $data->{Vs_Meas} = $data->{Vs_Meas} - (($data->{Is}) / 1000) * $ScreenRs - (0.6 * $cal->{CalVar7});
   }
 
   if ($opts->{verbose}) {
@@ -916,4 +701,26 @@ puTracer - command line quick test
 
 =head1 SYNOPSIS
 
-putracer.pl --tube 12AU7
+tracer.pl [options] --tube 12AU7
+
+    Options:
+        --hot!                            # expect filiments to be hot already
+        --warm!                           # leave filiments on or not
+        --debug                           # protocol-level debugging
+        --verbose                         # print measurement requests, and responses.
+        --device=s                        # serial device
+        --preset=s                        # preset trace settings
+        --name=s                          # name to put in log
+        --tube=s                          # tube type
+        --vg=sva=svs=srp=fia=fgm=fmu=fvf=s # measurement value override
+        --compliance=i                    # miliamps 
+        --settle=i                        # settle delay after slow heating tube 
+        --averaging=i                     # averaging 
+        --gain=i                          # gain 
+        --correction!                     # low voltage correction
+        --log=s                           # path to the logfile
+        --quicktest|quicktest-triode|qtt  # do quicktest of triodes to a log file, rather than a sweep.
+        --quicktest-pentode|qtp           # do quicktest of triodes to a log file, rather than a sweep.
+        --offset=i                        # quicktest offset percentage
+        --calm=i                          # delay this long before the next command after a end measurement
+
