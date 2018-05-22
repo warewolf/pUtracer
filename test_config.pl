@@ -23,24 +23,27 @@ use File::Slurp;
 #}
 #
 #foreach my $item (sort keys %calset) {
-#    
+#
 #    printf("%10s\t%6.3f\n",$item, $calset{$item});
 #}
-my %cal;
-my @lines = read_file('app.cal');
-my $count = 0;
-foreach my $line (@lines) {
-    $count++;
-    my $idx = "CalVar" . $count;
-    $line =~ s/\s+//;
-    ($cal{$idx}, my $dud) = split( /\s+/, $line );
-    if ($count >= 10) {last;}
+
+sub get_cal {
+    my %cal;
+    my @lines = read_file('app.cal');
+    my $count = 0;
+    foreach my $line (@lines) {
+        $count++;
+        my $idx = "CalVar" . $count;
+        $line =~ s/\s+//;
+        ( $cal{$idx}, my $dud ) = split( /\s+/, $line );
+        $cal{$idx} = $cal{$idx} / 1000;
+        if ( $count >= 10 ) { last; }
+    }
+    return \%cal;
 }
 
-foreach my $var (sort keys %cal) {
-    printf("%10s\t%6.3f\n",$var, $cal{$var});
-}    
-
-
-
+my $calref = get_cal();
+foreach my $var ( sort keys %{$calref} ) {
+    printf( "%10s\t%6.3f\n", $var, $calref->{$var} );
+}
 
