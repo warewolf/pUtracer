@@ -15,8 +15,6 @@ our @EXPORT    = qw(
     %averaging_to_tracer %gain_from_tracer %gain_to_tracer %gain_to_average @measurement_fields %compliance_to_tracer
   );
   
-our @EXPORT_OK = qw( $X $Y );
-
 # commands http://dos4ever.com/uTracerlog/tubetester2.html#protocol
 
 const our $CMD_START        => 0x00;
