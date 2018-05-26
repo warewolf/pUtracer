@@ -22,7 +22,6 @@ my $cfg    = Config::General->new("app.ini");
 my %config = $cfg->getall();
 
 my $opts  = $config{options};
-my $cal   = get_cal();
 my $tubes = $config{tubes};
 
 $opts->{preset} = sub {
@@ -1000,21 +999,6 @@ sub decode_measurement {    # {{{
     return $data;
 }    # }}}
 
-# Get the calibration data from the uTracer cal file (app.cal)
-sub get_cal {
-    my %cal;
-    my @lines = read_file('app.cal');
-    my $count = 0;
-    foreach my $line (@lines) {
-        $count++;
-        my $idx = "CalVar" . $count;
-        $line =~ s/\s+//;
-        ( $cal{$idx}, my $dud ) = split( /\s+/, $line );
-        $cal{$idx} = $cal{$idx} / 1000;
-        if ( $count >= 10 ) { last; }
-    }
-    return \%cal;
-}
 
 __END__
 

@@ -6,6 +6,7 @@ use warnings;
 use Exporter qw( import );
 use Const::Fast;
 use Config::General;
+use File::Slurp;
 
 our @EXPORT    = qw( 
     $CMD_START $CMD_MEASURE $CMD_MEASURE_HOLD $CMD_END $CMD_FILAMENT $CMD_PING 
@@ -13,6 +14,7 @@ our @EXPORT    = qw(
     $DECODE_SCALE_IA $DECODE_SCALE_IS $DECODE_TRACER $DECODE_SCALE_VA $DECODE_SCALE_VS 
     $ENCODE_TRACER $ENCODE_SCALE_VA $ENCODE_SCALE_VS $ENCODE_SCALE_VG  $SCALE_VSU 
     %averaging_to_tracer %gain_from_tracer %gain_to_tracer %gain_to_average @measurement_fields %compliance_to_tracer
+    $cal
   );
   
 # commands http://dos4ever.com/uTracerlog/tubetester2.html#protocol
@@ -45,6 +47,8 @@ const our $VsupR2   => 6_800;      # R43
 const our $VminR1   => 2_000;      # R3 (-15v supply)
 const our $VminR2   => 47_000;     # R4 (-15v supply)
 
+const our $cal => get_cal();# Read the cal data from the app.cal file and preset to tracer as a const hash
+
 # scale constants, 400V version
 #  ... so these are basically refactored versions of Ronald's formulas in his VB code
 #  ... once I got my head wrapped around what was being done, and why.
@@ -55,13 +59,11 @@ const our $DECODE_SCALE_IS => 1000 / $ScreenRs;
 # Read the config to get the CalVars
 my $cfg = Config::General->new("app.ini");
 my %config  = $cfg->getall();
-my %cal = %{$config{calibration}};
-
 
 # decode values from the tracer
 const our $DECODE_TRACER   => 5 / 1024;
-const our $DECODE_SCALE_VA => ( $AnodeR1 + $AnodeR2 ) / ( $AnodeR1 * $cal{CalVar1} );
-const our $DECODE_SCALE_VS => ( $ScreenR1 + $ScreenR2 ) / ( $ScreenR1 * $cal{CalVar2} );
+const our $DECODE_SCALE_VA => ( $AnodeR1 + $AnodeR2 ) / ( $AnodeR1 * $cal->{CalVar1} );
+const our $DECODE_SCALE_VS => ( $ScreenR1 + $ScreenR2 ) / ( $ScreenR1 * $cal->{CalVar2} );
 #
 # encode values to the tracer
 const our $ENCODE_TRACER   => 1024 / 5;
@@ -151,6 +153,23 @@ const our %compliance_to_tracer => (
     25  => 0xA2,
     0   => 0x00
 );
+
+# Get the calibration data from the uTracer cal file (app.cal)
+sub get_cal {
+    my %cal;
+    my @lines = read_file('app.cal');
+    my $count = 0;
+    foreach my $line (@lines) {
+        $count++;
+        my $idx = "CalVar" . $count;
+        $line =~ s/\s+//;
+        ( $cal{$idx}, my $dud ) = split( /\s+/, $line );
+        $cal{$idx} = $cal{$idx} / 1000;
+        if ( $count >= 10 ) { last; }
+    }
+    return \%cal;
+}
+
 
 __PACKAGE__;
 __END__
