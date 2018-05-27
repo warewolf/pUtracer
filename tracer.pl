@@ -17,12 +17,14 @@ use File::Slurp;
 use File::Basename;
 use lib dirname(__FILE__);
 use uTracerConstants;
+use TubeDatabase;
 
 my $cfg    = Config::General->new("app.ini");
 my %config = $cfg->getall();
 
 my $opts  = $config{options};
 my $tubes = $config{tubes};
+initdb();
 
 $opts->{preset} = sub {
     $_[1]                = lc $_[1];
@@ -47,6 +49,8 @@ GetOptions(
     "preset=s",    # preset trace settings
     "name=s",      # name to put in log
     "tube=s",      # tube type
+    "interactive!",# prompt to store current quicktest entry in the database
+    "store",       # automatically store the current quicktest in the database
                    #
     "vg=s", "va=s", "vs=s", "rp=f", "ia=f", "gm=f", "mu=f", "vf=s",    # measurement value override
     "compliance=i",                      # miliamps
@@ -118,6 +122,23 @@ foreach my $arg (qw(vg va vs vf)) {    # {{{
 # rough guess as to what the system supply is supposed to be
 my $VsupSystem = 19.5;
 
+# "main"
+if ( !( $opts->{quicktest} || $opts->{"quicktest-pentode"} ) ) {
+    do_curve();
+} elsif ( $opts->{quicktest} ) {
+    quicktest_triode();
+} elsif ( $opts->{"quicktest-pentode"} ) {
+    quicktest_pentode();
+} else {
+    die "lolwat";
+}
+
+$log->close();
+##END MAIN
+
+#===========
+# Begin Subs
+#===========
 sub getVa {    # {{{ # getVa is done
     my ($voltage) = @_;
 
@@ -205,16 +226,6 @@ sub getVf {    # {{{ # getVf is done
     return $ret;
 }    # }}}
 
-# "main"
-if ( !( $opts->{quicktest} || $opts->{"quicktest-pentode"} ) ) {
-    do_curve();
-} elsif ( $opts->{quicktest} ) {
-    quicktest_triode();
-} elsif ( $opts->{"quicktest-pentode"} ) {
-    quicktest_pentode();
-} else {
-    die "lolwat";
-}
 
 sub warmup_tube {
     if ( $opts->{hot} ) {    # {{{
@@ -237,6 +248,51 @@ sub warmup_tube {
         sleep $opts->{settle};
     }    # }}}
     printf STDERR "Tube heated.\n";
+}
+
+sub init_voltage_ranges {
+    
+    my ( @va, @vs, @vg );
+
+    # bracket Va
+    push @va, $opts->{va}[0] - ( $opts->{va}[0] * ( $opts->{offset} / 100 ) );
+    push @va, $opts->{va}[0] + ( $opts->{va}[0] * ( $opts->{offset} / 100 ) );
+    
+
+    # bracket Vs
+    push @vs, $opts->{vs}[0] - ( $opts->{vs}[0] * ( $opts->{offset} / 100 ) );
+    push @vs, $opts->{vs}[0] + ( $opts->{vs}[0] * ( $opts->{offset} / 100 ) );
+
+    # bracket Vg
+    push @vg, $opts->{vg}[0] - ( $opts->{vg}[0] * ( $opts->{offset} / 100 ) );
+    push @vg, $opts->{vg}[0] + ( $opts->{vg}[0] * ( $opts->{offset} / 100 ) );
+
+    # high
+    if ( first { $_ > 400 } @va ) {
+        die "Va voltages > 400v is not allowed.  Try reducing voltage, or offset percentage";
+    }
+    
+    if ( first { $_ > 400 } @vs ) {
+        die "Vs voltages > 400v is not allowed.  Try reducing voltage, or offset percentage";
+    }
+    # low
+    if ( first { $_ < 2 } @va ) {
+        die "Va voltages < 2v is not allowed.  Try increasing voltage, or decreasing offset percentage";
+    }
+
+    if ( first { $_ < 2 } @vs ) {
+        die "Vs voltages < 2v is not allowed.  Try increasing voltage, or decreasing offset percentage";
+    }
+
+    # grid
+    if ( first { $_ > 0 } @vg ) {
+        die "Vg voltages > 0v is not allowed.";
+    }
+    if ( first { $_ < -40 } @vg ) {
+        die "Vg voltages < -40v is not allowed.  Try increasing voltage, or decreasing offset percentage";
+    }
+    
+    return \@va, \@vs, \@vg;
 }
 
 sub quicktest_triode {    # {{{
@@ -267,106 +323,38 @@ sub quicktest_triode {    # {{{
     # Basically, we do four measurements offset around the suggested bias point of a tube.  The suggested bias point is the 5th.
     # Think of the pattern of dots of the 5th side of a six sided die, to visualize.
 
-    my ( @va, @vs, @vg, @todo );
+    my ($va, $vs, $vg) = init_voltage_ranges(); # make sure the requeted voltage ranges are within the capabilities of the uTracer
+    my ( @todo );
 
-    # bracket Va
-    push @va, $opts->{va}[0] - ( $opts->{va}[0] * ( $opts->{offset} / 100 ) );
-    push @va, $opts->{va}[0] + ( $opts->{va}[0] * ( $opts->{offset} / 100 ) );
-
-    # bracket Vs
-    push @vs, $opts->{vs}[0] - ( $opts->{vs}[0] * ( $opts->{offset} / 100 ) );
-    push @vs, $opts->{vs}[0] + ( $opts->{vs}[0] * ( $opts->{offset} / 100 ) );
-
-    # bracket Vg
-    push @vg, $opts->{vg}[0] - ( $opts->{vg}[0] * ( $opts->{offset} / 100 ) );
-    push @vg, $opts->{vg}[0] + ( $opts->{vg}[0] * ( $opts->{offset} / 100 ) );
-
-    # high
-    if ( first { $_ > 400 } @va ) {
-        die "Va voltages > 400v is not allowed.  Try reducing voltage, or offset percentage";
-    }
-    if ( first { $_ > 400 } @vs ) {
-        die "Vs voltages > 400v is not allowed.  Try reducing voltage, or offset percentage";
-    }
-
-    # low
-    if ( first { $_ < 2 } @va ) {
-        die "Va voltages < 2v is not allowed.  Try increasing voltage, or decreasing offset percentage";
-    }
-    if ( first { $_ < 2 } @vs ) {
-        die "Vs voltages < 2v is not allowed.  Try increasing voltage, or decreasing offset percentage";
-    }
-
-    # grid
-    if ( first { $_ > 0 } @vg ) {
-        die "Vg voltages > 0v is not allowed.";
-    }
-    if ( first { $_ < -40 } @vg ) {
-        die "Vg voltages < -40v is not allowed.  Try increasing voltage, or decreasing offset percentage";
-    }
 
     # four corner dots
-    @todo = map { { va => $va[ $_->[0] ], vs => $vs[ $_->[0] ], vg => $vg[ $_->[1] ] } } ( [ 0, 0 ], [ 0, 1 ], [ 1, 0 ], [ 1, 1 ] );
+    @todo = map { { va => @$va[ $_->[0] ], vs => @$vs[ $_->[0] ], vg => @$vg[ $_->[1] ] } } ( [ 0, 0 ], [ 0, 1 ], [ 1, 0 ], [ 1, 1 ] );
 
     # and that last center dot, to calculate current draw at the bias point center.
     push @todo, { va => $opts->{va}[0], vs => $opts->{vs}[0], vg => $opts->{vg}[0] };
 
-    my @results;
-    my $count = 1;
-    foreach my $point (@todo) {
-        printf( "\nMeasuring Vg: %f\tVa: %f\tVs: %f\tVf: %f\n", $point->{vg}, $point->{va}, $point->{vs}, $opts->{vf}->[0] )
-          if ( $opts->{verbose} );
-        my $measurement = do_measurement(
-            vg => $point->{vg},
-            va => $point->{va},
-            vs => $point->{vs},
-            vf => $opts->{vf}->[0],
-        );
-        $measurement->{Vg} = $point->{vg};
-        push @results, $measurement;
-        $log->printf(
-            "%s\t%s\t%d\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\n",  # {{{
-            $opts->{name},
-            $opts->{tube},
-            $count++,
-            $measurement->{Vpsu},
-            $measurement->{Vmin},
-            $point->{vg},
-            $point->{va},
-            $measurement->{Va_Meas},
-            $measurement->{Ia},
-            $measurement->{Ia_Raw},
-            $measurement->{Gain_Ia},
-            $point->{vs},
-            $measurement->{Vs_Meas},
-            $measurement->{Is},
-            $measurement->{Is_Raw},
-            $measurement->{Gain_Is},
-            $opts->{vf}->[0],
-        );    # }}}
-    }
+    my $results = get_results_matrix(\@todo);
 
     # extract center point, for current draw at the bias point.
-    my $center = pop @results;
-    print Dumper @results;
+    my $center = pop @$results;
 
     # calculate gm
     # gm = dIa / dVg, consistent Va, changing Vg
     my ( $GmA, $GmS );
 
-    my ($min_va) = map { $_->{Va} } sort { $a->{Va} > $b->{Va} } @results;
-    my ($max_va) = map { $_->{Va} } sort { $a->{Va} < $b->{Va} } @results;
+    my ($min_va) = map { $_->{Va} } sort { $a->{Va} > $b->{Va} } @$results;
+    my ($max_va) = map { $_->{Va} } sort { $a->{Va} < $b->{Va} } @$results;
 
     # go through the two Va values
     foreach my $Va ( $min_va, $max_va ) {    # {{{
                                              # find the two Vg values
-        my ($min_vg) = map { $_->{Vg} } sort { $a->{Vg} > $b->{Vg} } grep { $_->{Va} == $Va } @results;
-        my ($max_vg) = map { $_->{Vg} } sort { $a->{Vg} < $b->{Vg} } grep { $_->{Va} == $Va } @results;
+        my ($min_vg) = map { $_->{Vg} } sort { $a->{Vg} > $b->{Vg} } grep { $_->{Va} == $Va } @$results;
+        my ($max_vg) = map { $_->{Vg} } sort { $a->{Vg} < $b->{Vg} } grep { $_->{Va} == $Va } @$results;
         my $delta_vg = $max_vg - $min_vg;
 
         # grab currents
-        my ($max_ia) = map { $_->{Ia} } sort { $a->{Ia} > $b->{Ia} } grep { $_->{Va} == $Va && $_->{Vg} == $max_vg } @results;
-        my ($min_ia) = map { $_->{Ia} } sort { $a->{Ia} < $b->{Ia} } grep { $_->{Va} == $Va && $_->{Vg} == $min_vg } @results;
+        my ($max_ia) = map { $_->{Ia} } sort { $a->{Ia} > $b->{Ia} } grep { $_->{Va} == $Va && $_->{Vg} == $max_vg } @$results;
+        my ($min_ia) = map { $_->{Ia} } sort { $a->{Ia} < $b->{Ia} } grep { $_->{Va} == $Va && $_->{Vg} == $min_vg } @$results;
         my $delta_ia = $max_ia - $min_ia;
         $GmA += $delta_ia / $delta_vg;
     }    # }}}
@@ -374,19 +362,19 @@ sub quicktest_triode {    # {{{
     # average the two Va voltage Gm measurements together
     $GmA /= 2;
 
-    my ($min_vs) = map { $_->{Vs} } sort { $a->{Vs} > $b->{Vs} } @results;
-    my ($max_vs) = map { $_->{Vs} } sort { $a->{Vs} < $b->{Vs} } @results;
+    my ($min_vs) = map { $_->{Vs} } sort { $a->{Vs} > $b->{Vs} } @$results;
+    my ($max_vs) = map { $_->{Vs} } sort { $a->{Vs} < $b->{Vs} } @$results;
 
     # go through the two Va values
     foreach my $Vs ( $min_vs, $max_vs ) {    # {{{
                                              # find the two Vg values
-        my ($min_vg) = map { $_->{Vg} } sort { $a->{Vg} > $b->{Vg} } grep { $_->{Vs} == $Vs } @results;
-        my ($max_vg) = map { $_->{Vg} } sort { $a->{Vg} < $b->{Vg} } grep { $_->{Vs} == $Vs } @results;
+        my ($min_vg) = map { $_->{Vg} } sort { $a->{Vg} > $b->{Vg} } grep { $_->{Vs} == $Vs } @$results;
+        my ($max_vg) = map { $_->{Vg} } sort { $a->{Vg} < $b->{Vg} } grep { $_->{Vs} == $Vs } @$results;
         my $delta_vg = $max_vg - $min_vg;
 
         # grab currents
-        my ($max_is) = map { $_->{Is} } sort { $a->{Is} > $b->{Is} } grep { $_->{Vs} == $Vs && $_->{Vg} == $max_vg } @results;
-        my ($min_is) = map { $_->{Is} } sort { $a->{Is} < $b->{Is} } grep { $_->{Vs} == $Vs && $_->{Vg} == $min_vg } @results;
+        my ($max_is) = map { $_->{Is} } sort { $a->{Is} > $b->{Is} } grep { $_->{Vs} == $Vs && $_->{Vg} == $max_vg } @$results;
+        my ($min_is) = map { $_->{Is} } sort { $a->{Is} < $b->{Is} } grep { $_->{Vs} == $Vs && $_->{Vg} == $min_vg } @$results;
         my $delta_is = $max_is - $min_is;
         $GmS += $delta_is / $delta_vg;
     }    # }}}
@@ -398,19 +386,19 @@ sub quicktest_triode {    # {{{
     # rp = dVa / dIa, consistent Vg, changing Va
     my ( $RpA, $RpS );
 
-    my ($min_vg) = map { $_->{Vg} } sort { $a->{Vg} > $b->{Vg} } @results;
-    my ($max_vg) = map { $_->{Vg} } sort { $a->{Vg} < $b->{Vg} } @results;
+    my ($min_vg) = map { $_->{Vg} } sort { $a->{Vg} > $b->{Vg} } @$results;
+    my ($max_vg) = map { $_->{Vg} } sort { $a->{Vg} < $b->{Vg} } @$results;
 
     # go through the two Vg values
     foreach my $Vg ( $min_vg, $max_vg ) {    # {{{
                                              # find the two Va values
-        my ($min_va) = map { $_->{Va} } sort { $a->{Va} > $b->{Va} } grep { $_->{Vg} == $Vg } @results;
-        my ($max_va) = map { $_->{Va} } sort { $a->{Va} < $b->{Va} } grep { $_->{Vg} == $Vg } @results;
+        my ($min_va) = map { $_->{Va} } sort { $a->{Va} > $b->{Va} } grep { $_->{Vg} == $Vg } @$results;
+        my ($max_va) = map { $_->{Va} } sort { $a->{Va} < $b->{Va} } grep { $_->{Vg} == $Vg } @$results;
         my $delta_va = $max_va - $min_va;
 
         # grab currents
-        my ($max_ia) = map { $_->{Ia} } sort { $a->{Ia} > $b->{Ia} } grep { $_->{Vg} == $Vg && $_->{Va} == $max_va } @results;
-        my ($min_ia) = map { $_->{Ia} } sort { $a->{Ia} < $b->{Ia} } grep { $_->{Vg} == $Vg && $_->{Va} == $min_va } @results;
+        my ($max_ia) = map { $_->{Ia} } sort { $a->{Ia} > $b->{Ia} } grep { $_->{Vg} == $Vg && $_->{Va} == $max_va } @$results;
+        my ($min_ia) = map { $_->{Ia} } sort { $a->{Ia} < $b->{Ia} } grep { $_->{Vg} == $Vg && $_->{Va} == $min_va } @$results;
         my $delta_ia = $max_ia - $min_ia;
         $RpA += $delta_va / $delta_ia;
     }    # }}}
@@ -418,13 +406,13 @@ sub quicktest_triode {    # {{{
 
     foreach my $Vg ( $min_vg, $max_vg ) {    # {{{
                                              # find the two Va values
-        my ($min_vs) = map { $_->{Vs} } sort { $a->{Vs} > $b->{Vs} } grep { $_->{Vg} == $Vg } @results;
-        my ($max_vs) = map { $_->{Vs} } sort { $a->{Vs} < $b->{Vs} } grep { $_->{Vg} == $Vg } @results;
+        my ($min_vs) = map { $_->{Vs} } sort { $a->{Vs} > $b->{Vs} } grep { $_->{Vg} == $Vg } @$results;
+        my ($max_vs) = map { $_->{Vs} } sort { $a->{Vs} < $b->{Vs} } grep { $_->{Vg} == $Vg } @$results;
         my $delta_vs = $max_vs - $min_vs;
 
         # grab currents
-        my ($max_is) = map { $_->{Is} } sort { $a->{Is} > $b->{Is} } grep { $_->{Vg} == $Vg && $_->{Vs} == $max_vs } @results;
-        my ($min_is) = map { $_->{Is} } sort { $a->{Is} < $b->{Is} } grep { $_->{Vg} == $Vg && $_->{Vs} == $min_vs } @results;
+        my ($max_is) = map { $_->{Is} } sort { $a->{Is} > $b->{Is} } grep { $_->{Vg} == $Vg && $_->{Vs} == $max_vs } @$results;
+        my ($min_is) = map { $_->{Is} } sort { $a->{Is} < $b->{Is} } grep { $_->{Vg} == $Vg && $_->{Vs} == $min_vs } @$results;
         my $delta_is = $max_is - $min_is;
         $RpS += $delta_vs / $delta_is;
     }    # }}}
@@ -461,7 +449,6 @@ sub quicktest_triode {    # {{{
         $opts->{offset}
     );
 
-    # XXX FIXME do I need to make $opts->{ia} and $opts->{is} for expected anode and screen currents for pentodes?
     $log->printf(
         "# Test Results: Is: %2.2f mA (%d%%), Rs: %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n",
         $center->{Is}, ( $center->{Is} / $opts->{ia} ) * 100,
@@ -469,19 +456,64 @@ sub quicktest_triode {    # {{{
         $GmS, ( $GmS / $opts->{gm} ) * 100,
         $MuS, ( $MuS / $opts->{mu} ) * 100,
     );
+ 
+}    # }}}
+
+sub get_results_matrix {
+    
+    my $todo = shift;
+    my @results;
+    my $count = 1;
+    foreach my $point (@$todo) {
+        printf( "\nMeasuring Vg: %f\tVa: %f\tVs: %f\tVf: %f\n", $point->{vg}, $point->{va}, $point->{vs}, $opts->{vf}->[0] )
+          if ( $opts->{verbose} );
+        my $measurement = do_measurement(
+            vg => $point->{vg},
+            va => $point->{va},
+            vs => $point->{vs},
+            vf => $opts->{vf}->[0],
+        );
+        $measurement->{Vg} = $point->{vg};
+        push @results, $measurement;
+        $log->printf(
+            "%s\t%s\t%d\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\n",  # {{{
+            $opts->{name},
+            $opts->{tube},
+            $count++,
+            $measurement->{Vpsu},
+            $measurement->{Vmin},
+            $point->{vg},
+            $point->{va},
+            $measurement->{Va_Meas},
+            $measurement->{Ia},
+            $measurement->{Ia_Raw},
+            $measurement->{Gain_Ia},
+            $point->{vs},
+            $measurement->{Vs_Meas},
+            $measurement->{Is},
+            $measurement->{Is_Raw},
+            $measurement->{Gain_Is},
+            $opts->{vf}->[0],
+        );    # }}}
+    }
 
     end_measurement();
 
-    # Apparently, the uTracer needs a delay after a measurement cycle
-    $log->printf("\n\n");
-    $log->close();
     printf "Sleeping for $opts->{calm} seconds for uTracer\n";
     sleep $opts->{calm};
 
     # 00 - all zeros turn everything off
     # 40 turn off fil
     set_filament(0) if ( !$opts->{warm} );
-}    # }}}
+    
+    return \@results;
+}
+
+sub print_dual {
+    my $outstring = shift;
+    $log->printf($outstring);
+    print STDOUT ($outstring);
+}
 
 sub quicktest_pentode {    # {{{
     printf STDERR "Running quicktest...\n";
@@ -519,174 +551,100 @@ sub quicktest_pentode {    # {{{
     # VaMax,VaMin             Vs                Vg
     #
 
-    my ( @va, @vs, @vg, @todo );
+    my ($va, $vs, $vg) = init_voltage_ranges(); # make sure the requeted voltage ranges are within the capabilities of the uTracer
 
-    # bracket Va
-    push @va, $opts->{va}[0] - ( $opts->{va}[0] * ( $opts->{offset} / 100 ) );
-    push @va, $opts->{va}[0] + ( $opts->{va}[0] * ( $opts->{offset} / 100 ) );
-
-    # bracket Vs
-    push @vs, $opts->{vs}[0] - ( $opts->{vs}[0] * ( $opts->{offset} / 100 ) );
-    push @vs, $opts->{vs}[0] + ( $opts->{vs}[0] * ( $opts->{offset} / 100 ) );
-
-    # bracket Vg
-    push @vg, $opts->{vg}[0] - ( $opts->{vg}[0] * ( $opts->{offset} / 100 ) );
-    push @vg, $opts->{vg}[0] + ( $opts->{vg}[0] * ( $opts->{offset} / 100 ) );
-
-    # high
-    if ( first { $_ > 400 } @va ) {
-        die "Va voltages > 400v is not allowed.  Try reducing voltage, or offset percentage";
-    }
-    if ( first { $_ > 400 } @vs ) {
-        die "Vs voltages > 400v is not allowed.  Try reducing voltage, or offset percentage";
-    }
-
-    # low
-    if ( first { $_ < 2 } @va ) {
-        die "Va voltages < 2v is not allowed.  Try increasing voltage, or decreasing offset percentage";
-    }
-    if ( first { $_ < 2 } @vs ) {
-        die "Vs voltages < 2v is not allowed.  Try increasing voltage, or decreasing offset percentage";
-    }
-
-    # grid
-    if ( first { $_ > 0 } @vg ) {
-        die "Vg voltages > 0v is not allowed.";
-    }
-    if ( first { $_ < -40 } @vg ) {
-        die "Vg voltages < -40v is not allowed.  Try increasing voltage, or decreasing offset percentage";
-    }
-
+    my @todo;
+    
     # Vary Vs while holding Va & Vg at bias conditions
-    @todo = map { { va => $opts->{va}[0], vs => $vs[$_], vg => $opts->{vg}[0] } } ( 0, 1 );
+    @todo = map { { va => $opts->{va}[0], vs => @$vs[$_], vg => $opts->{vg}[0] } } ( 0, 1 );
 
     # Vary Vg while holding Va & Vs at bias conditions
-    push @todo, map { { va => $opts->{va}[0], vs => $opts->{vs}[0], vg => $vg[$_] } } ( 0, 1 );
+    push @todo, map { { va => $opts->{va}[0], vs => $opts->{vs}[0], vg => @$vg[$_] } } ( 0, 1 );
 
     # Vary Va while holding Vs & Vg at bias conditions
-    push @todo, map { { va => $va[$_], vs => $opts->{vs}[0], vg => $opts->{vg}[0] } } ( 0, 1 );
+    push @todo, map { { va => @$va[$_], vs => $opts->{vs}[0], vg => $opts->{vg}[0] } } ( 0, 1 );
 
     # and that last center dot, to calculate current draw at the bias point center.
     push @todo, { va => $opts->{va}[0], vs => $opts->{vs}[0], vg => $opts->{vg}[0] };
 
     if ($opts->{debug}) {dump_csv( 'todo.csv', \@todo );}
 
-    # and that last center dot, to calculate current draw at the bias point center.
-    my @results;
-    my $count = 1;
-    foreach my $point (@todo) {
-        printf( "\nMeasuring Vg: %f\tVa: %f\tVs: %f\tVf: %f\n", $point->{vg}, $point->{va}, $point->{vs}, $opts->{vf}->[0] )
-          if ( $opts->{verbose} );
-        my $measurement = do_measurement(
-            vg => $point->{vg},
-            va => $point->{va},
-            vs => $point->{vs},
-            vf => $opts->{vf}->[0],
-        );
-        $measurement->{Vg} = $point->{vg};
-        push @results, $measurement;
-        $log->printf(
-            "%s\t%s\t%d\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\t%2.2f\n",  # {{{
-            $opts->{name},
-            $opts->{tube},
-            $count++,
-            $measurement->{Vpsu},
-            $measurement->{Vmin},
-            $point->{vg},
-            $point->{va},
-            $measurement->{Va_Meas},
-            $measurement->{Ia},
-            $measurement->{Ia_Raw},
-            $measurement->{Gain_Ia},
-            $point->{vs},
-            $measurement->{Vs_Meas},
-            $measurement->{Is},
-            $measurement->{Is_Raw},
-            $measurement->{Gain_Is},
-            $opts->{vf}->[0],
-        );    # }}}
-    }
-
-    end_measurement();
-
-    printf "Sleeping for $opts->{calm} seconds for uTracer\n";
-    sleep $opts->{calm};
-
-    # 00 - all zeros turn everything off
-    # 40 turn off fil
-    set_filament(0) if ( !$opts->{warm} );
+    my $results = get_results_matrix(\@todo);
 
     ### Do the calculations now that we have the results
-    if ($opts->{debug}) {dump_csv( 'results.csv', \@results )};
+    if ($opts->{debug}) {dump_csv( 'results.csv', $results )};
 
     # extract center point, for current draw at the bias point.
-    my $center = pop @results;
+    my $center = pop @$results;
 
     # calculate the partial derivaties
     # dVa
-    my ($min_va) = map { $_->{Va_Meas} } sort { $a->{Va_Meas} > $b->{Va_Meas} } @results;
-    my ($max_va) = map { $_->{Va_Meas} } sort { $a->{Va_Meas} < $b->{Va_Meas} } @results;
+    my ($min_va) = map { $_->{Va_Meas} } sort { $a->{Va_Meas} > $b->{Va_Meas} } @$results;
+    my ($max_va) = map { $_->{Va_Meas} } sort { $a->{Va_Meas} < $b->{Va_Meas} } @$results;
     my $dVa = $max_va - $min_va;
 
     # dVs
-    my ($min_vs) = map { $_->{Vs_Meas} } sort { $a->{Vs_Meas} > $b->{Vs_Meas} } @results;
-    my ($max_vs) = map { $_->{Vs_Meas} } sort { $a->{Vs_Meas} < $b->{Vs_Meas} } @results;
+    my ($min_vs) = map { $_->{Vs_Meas} } sort { $a->{Vs_Meas} > $b->{Vs_Meas} } @$results;
+    my ($max_vs) = map { $_->{Vs_Meas} } sort { $a->{Vs_Meas} < $b->{Vs_Meas} } @$results;
     my $dVs      = $max_vs - $min_vs;
 
     # dVg
-    my ($min_vg) = map { $_->{Vg} } sort { $a->{Vg} > $b->{Vg} } @results;
-    my ($max_vg) = map { $_->{Vg} } sort { $a->{Vg} < $b->{Vg} } @results;
+    my ($min_vg) = map { $_->{Vg} } sort { $a->{Vg} > $b->{Vg} } @$results;
+    my ($max_vg) = map { $_->{Vg} } sort { $a->{Vg} < $b->{Vg} } @$results;
     my $dVg      = $max_vg - $min_vg;
 
     # Calculate RpA & dIs/dVa where Va = min, max
     # go through the two Va values
     # find the two Ia values
-    my ($min_ia) = map { $_->{Ia} } grep { $_->{Va_Meas} == $min_va } @results;
-    my ($min_is) = map { $_->{Is} } grep { $_->{Va_Meas} == $min_va } @results;
-    my ($max_ia) = map { $_->{Ia} } grep { $_->{Va_Meas} == $max_va } @results;
-    my ($max_is) = map { $_->{Is} } grep { $_->{Va_Meas} == $max_va } @results;
+    my ($min_ia) = map { $_->{Ia} } grep { $_->{Va_Meas} == $min_va } @$results;
+    my ($min_is) = map { $_->{Is} } grep { $_->{Va_Meas} == $min_va } @$results;
+    my ($max_ia) = map { $_->{Ia} } grep { $_->{Va_Meas} == $max_va } @$results;
+    my ($max_is) = map { $_->{Is} } grep { $_->{Va_Meas} == $max_va } @$results;
     my $RpA = $dVa/($max_ia - $min_ia) ;
     my $dIs_dVa = ($max_is - $min_is)/$dVa;
 
     # Calculate GmA where Vg = min, max
     # go through the two Vg values
     # find the two Ia values
-    ($min_ia) = map { $_->{Ia} } grep { $_->{Vg} == $min_vg } @results;
-    ($max_ia) = map { $_->{Ia} } grep { $_->{Vg} == $max_vg } @results;
+    ($min_ia) = map { $_->{Ia} } grep { $_->{Vg} == $min_vg } @$results;
+    ($max_ia) = map { $_->{Ia} } grep { $_->{Vg} == $max_vg } @$results;
     my $GmA =  ($max_ia - $min_ia) / $dVg ;
 
     # Calculate RpS & dIa/dVs where Vs = min, max
     # go through the two Vs values
     # find the two Is values
-    ($min_is) = map { $_->{Is} } grep { $_->{Vs_Meas} == $min_vs } @results;
-    ($min_ia) = map { $_->{Ia} } grep { $_->{Vs_Meas} == $min_vs } @results;
-    ($max_is) = map { $_->{Is} } grep { $_->{Vs_Meas} == $max_vs } @results;
-    ($max_ia) = map { $_->{Ia} } grep { $_->{Vs_Meas} == $max_vs } @results;
+    ($min_is) = map { $_->{Is} } grep { $_->{Vs_Meas} == $min_vs } @$results;
+    ($min_ia) = map { $_->{Ia} } grep { $_->{Vs_Meas} == $min_vs } @$results;
+    ($max_is) = map { $_->{Is} } grep { $_->{Vs_Meas} == $max_vs } @$results;
+    ($max_ia) = map { $_->{Ia} } grep { $_->{Vs_Meas} == $max_vs } @$results;
     my $RpS =  $dVs / ($max_is - $min_is) ;
     my $dIa_dVs = ($max_ia - $min_ia) / $dVs; 
 
     # Calculate GmS where Vg = min, max
     # go through the two Vg values
     # find the two Is values
-    ($min_is) = map { $_->{Is} } grep { $_->{Vs_Meas} == $min_vs } @results;
-    ($max_is) = map { $_->{Is} } grep { $_->{Vs_Meas} == $max_vs } @results;
+    ($min_is) = map { $_->{Is} } grep { $_->{Vs_Meas} == $min_vs } @$results;
+    ($max_is) = map { $_->{Is} } grep { $_->{Vs_Meas} == $max_vs } @$results;
     my $GmS =  ($max_is - $min_is) / $dVg ;
 
     my $MuA = $RpA * $GmA;    # Mu of the anode
     my $MuS = $RpS * $GmS;
 
-    $log->printf( "\n# %s  pUTracer3 400V CLI, V%s Triode Quick Test\n#\n",
-        strftime( "%m/%d/%Y %I:%m:%S %p", localtime() ), $VERSION );
-    $log->printf( "# %s %s\n#\n", $opts->{tube}, $opts->{name} );
+    ### Output
+    
+    print_dual( sprintf( "\n# %s  pUTracer3 400V CLI, V%s Triode Quick Test\n#\n",
+        strftime( "%m/%d/%Y %I:%m:%S %p", localtime() ), $VERSION )
+    );
+    print_dual( sprintf( "# %s %s\n#\n", $opts->{tube}, $opts->{name} ) );
 
-    $log->printf(
+    print_dual( sprintf(
         "# Test Conditions: Va: %dv @ %d %%, Vs: %dv @ %d %%, Vg: %1.1fv @ %d %%\n#\n",
         $opts->{va}->[0],
         $opts->{offset}, $opts->{vs}->[0],
         $opts->{offset}, $opts->{vg}->[0],
         $opts->{offset}
-    );
-    $log->printf(
+    ) );
+    print_dual( sprintf(
 "# Anode Results: Ia: %2.2f mA (%d%%), Ra: %2.2f kOhm (%d%%), GmA: %2.2f mA/V (%d%%), Mu1: %d (%d%%), dIa/dVs: %5.4f (uA/V) \n#\n",
         $center->{Ia},
         ( $center->{Ia} / $opts->{ia} ) * 100,
@@ -697,19 +655,40 @@ sub quicktest_pentode {    # {{{
         $MuA,
         ( $MuA / $opts->{mu} ) * 100,
         $dIa_dVs * 1000,
-    );
+    ));
 
-    $log->printf(
+    print_dual( sprintf(
         "# Screen Results: Is: %2.2f mA (%d%%), Rs: %2.2f kOhm , GmS: %2.2f mA/V , Mu2: %d , dIs/dVa %5.4f (uA/V) \n#\n",
         $center->{Is}, ( $center->{Is} / $opts->{is} ) * 100,
         $RpS, $GmS, $MuS, $dIs_dVa * 1000
-    );
+    ));
 
-    $log->printf( "# Deltas: dVa %2.2f V, dVs %2.2f V, dVg %2.2f V \n#\n",
-        $dVa, $dVs, $dVg );
+    print_dual(sprintf( "# Deltas: dVa %2.2f V, dVs %2.2f V, dVg %2.2f V \n#\n",$dVa, $dVs, $dVg ));
 
-    $log->printf("\n\n");
-    $log->close();
+    print_dual("\n\n");
+    
+    #@pentode_fields = qw( type serial ia is ra rs gma gms mua mus dIa_dVs dIs_dVa );
+    
+    if ($opts->{store}) {
+        print STDOUT "Updating tube:" . $opts->{tube} . ':' . $opts->{name} . " pentodes table in tubes.sq3\n";
+        my %db_data; 
+        @db_data{@pentode_fields} = (
+            $opts->{tube},
+            $opts->{name},
+            $center->{Ia},
+            $center->{Is},
+            $RpA,
+            $RpS,
+            $GmA,
+            $GmS,
+            $MuA,
+            $MuS,
+            $dIa_dVs,
+            $dIs_dVa
+        );
+        
+        insert_pentode( \%db_data ); 
+    }
 }    # }}}
 
 sub dump_csv {
@@ -778,7 +757,7 @@ sub do_curve {    # {{{
 
     #   10 - do measurement
     my $point = 1;
-    printf STDERR "Running curve measurements...\n";
+    printf STDERR "Running curve measurements...";
     foreach my $vg_step ( 0 .. $#{ $opts->{vg} } ) {    # {{{
         foreach my $step ( 0 .. $#{ $opts->{va} } ) {    # {{{
 
@@ -1014,6 +993,8 @@ tracer.pl [options] --tube 12AU7
         --hot                             # expect filiments to be hot already
         --warm                            # leave filiments on or not
         --debug                           # protocol-level debugging
+        --interactive                     # prompt to store current quicktest in the database
+        --store                           # automatically store the current quicktest in the database  
         --verbose                         # print measurement requests, and responses.
         --device=s                        # serial device
         --preset=s                        # preset trace settings
