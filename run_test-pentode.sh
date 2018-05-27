@@ -10,7 +10,6 @@ perl tracer.pl --preset ${TYPE}-gm --name "${NAME}" --log "${TYPE}-${NAME}-gm.cs
 # do quicktest
 perl tracer.pl --quicktest-pentode --store --preset ${TYPE} --name "${NAME}" --log "${TYPE}-${NAME}-quicktest.csv" --hot --settle 0 
 
-#tail -23  "${TYPE}-${NAME}-quicktest.csv"
 ./graph.sh
 ./make_pdf.sh "${TYPE}-${NAME}"
 mv *.pdf *.csv pentodes
