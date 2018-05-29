@@ -6,11 +6,12 @@ use warnings;
 use Exporter qw( import );
 use Data::Dumper qw( Dumper );
 
-our @EXPORT = qw( initdb insert_triode insert_pentode @pentode_fields);
+our @EXPORT = qw( initdb insert_triode insert_pentode @pentode_fields @triode_fields );
 
 use DBI;
 
 our @pentode_fields = qw( type serial ia is ra rs gma gms mua mus dIa_dVs dIs_dVa );
+our @triode_fields  = qw( type serial ia is ra rs gma gms mua mus);
 
 my $dbh = DBI->connect( "dbi:SQLite:dbname=tubes.sq3", "", "" );
 
@@ -74,6 +75,24 @@ sub initdb {
         );
         " );
 }
+
+sub insert_triode {
+    my $results = shift;
+    
+    my @fields = qw( type serial ia is ra rs gma gms mua mus);
+    my @values;
+    
+    foreach my $field (@fields) {
+        push @values, $results->{$field};    
+    }
+
+    my $sth = $dbh->prepare(
+        "REPLACE INTO triodes ('type','serial','ia','is','ra','rs','gma','gms','mua','mus')
+                         VALUES (?,?,?,?,?,?,?,?,?,?);"
+    );
+    $sth->execute( @values );
+}
+
 
 sub insert_pentode {
     my $results = shift;

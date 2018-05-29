@@ -333,7 +333,12 @@ sub quicktest_triode {    # {{{
     # and that last center dot, to calculate current draw at the bias point center.
     push @todo, { va => $opts->{va}[0], vs => $opts->{vs}[0], vg => $opts->{vg}[0] };
 
+    #if ($opts->{debug}) {dump_csv( 'todo.csv', \@todo );}
+
     my $results = get_results_matrix(\@todo);
+    
+    ### Do the calculations now that we have the results
+    if ($opts->{debug}) {dump_csv( 'results.csv', $results )};
 
     # extract center point, for current draw at the bias point.
     my $center = pop @$results;
@@ -392,13 +397,13 @@ sub quicktest_triode {    # {{{
     # go through the two Vg values
     foreach my $Vg ( $min_vg, $max_vg ) {    # {{{
                                              # find the two Va values
-        my ($min_va) = map { $_->{Va} } sort { $a->{Va} > $b->{Va} } grep { $_->{Vg} == $Vg } @$results;
-        my ($max_va) = map { $_->{Va} } sort { $a->{Va} < $b->{Va} } grep { $_->{Vg} == $Vg } @$results;
+        my ($min_va) = map { $_->{Va_Meas} } sort { $a->{Va} > $b->{Va} } grep { $_->{Vg} == $Vg } @$results;
+        my ($max_va) = map { $_->{Va_Meas} } sort { $a->{Va} < $b->{Va} } grep { $_->{Vg} == $Vg } @$results;
         my $delta_va = $max_va - $min_va;
 
         # grab currents
-        my ($max_ia) = map { $_->{Ia} } sort { $a->{Ia} > $b->{Ia} } grep { $_->{Vg} == $Vg && $_->{Va} == $max_va } @$results;
-        my ($min_ia) = map { $_->{Ia} } sort { $a->{Ia} < $b->{Ia} } grep { $_->{Vg} == $Vg && $_->{Va} == $min_va } @$results;
+        my ($max_ia) = map { $_->{Ia} } sort { $a->{Ia} > $b->{Ia} } grep { $_->{Vg} == $Vg && $_->{Va_Meas} == $max_va } @$results;
+        my ($min_ia) = map { $_->{Ia} } sort { $a->{Ia} < $b->{Ia} } grep { $_->{Vg} == $Vg && $_->{Va_Meas} == $min_va } @$results;
         my $delta_ia = $max_ia - $min_ia;
         $RpA += $delta_va / $delta_ia;
     }    # }}}
@@ -406,13 +411,13 @@ sub quicktest_triode {    # {{{
 
     foreach my $Vg ( $min_vg, $max_vg ) {    # {{{
                                              # find the two Va values
-        my ($min_vs) = map { $_->{Vs} } sort { $a->{Vs} > $b->{Vs} } grep { $_->{Vg} == $Vg } @$results;
-        my ($max_vs) = map { $_->{Vs} } sort { $a->{Vs} < $b->{Vs} } grep { $_->{Vg} == $Vg } @$results;
+        my ($min_vs) = map { $_->{Vs_Meas} } sort { $a->{Vs} > $b->{Vs} } grep { $_->{Vg} == $Vg } @$results;
+        my ($max_vs) = map { $_->{Vs_Meas} } sort { $a->{Vs} < $b->{Vs} } grep { $_->{Vg} == $Vg } @$results;
         my $delta_vs = $max_vs - $min_vs;
 
         # grab currents
-        my ($max_is) = map { $_->{Is} } sort { $a->{Is} > $b->{Is} } grep { $_->{Vg} == $Vg && $_->{Vs} == $max_vs } @$results;
-        my ($min_is) = map { $_->{Is} } sort { $a->{Is} < $b->{Is} } grep { $_->{Vg} == $Vg && $_->{Vs} == $min_vs } @$results;
+        my ($max_is) = map { $_->{Is} } sort { $a->{Is} > $b->{Is} } grep { $_->{Vg} == $Vg && $_->{Vs_Meas} == $max_vs } @$results;
+        my ($min_is) = map { $_->{Is} } sort { $a->{Is} < $b->{Is} } grep { $_->{Vg} == $Vg && $_->{Vs_Meas} == $min_vs } @$results;
         my $delta_is = $max_is - $min_is;
         $RpS += $delta_vs / $delta_is;
     }    # }}}
@@ -424,39 +429,58 @@ sub quicktest_triode {    # {{{
     $MuA = $GmA * $RpA;
     $MuS = $GmS * $RpS;
 
-    $log->printf( "\n# %s  pUTracer3 400V CLI, V%s Triode Quick Test\n#\n",
-        strftime( "%m/%d/%Y %I:%m:%S %p", localtime() ), $VERSION );
-    $log->printf( "# %s %s\n#\n", $opts->{tube}, $opts->{name} );
-    $log->printf("# SECTION ANODE\n#\n");
-    $log->printf(
+    print_dual(sprintf( "\n# %s  pUTracer3 400V CLI, V%s Triode Quick Test\n#\n",
+        strftime( "%m/%d/%Y %I:%m:%S %p", localtime() ), $VERSION ));
+    print_dual(sprintf( "# %s %s\n#\n", $opts->{tube}, $opts->{name} ));
+    print_dual(sprintf("# SECTION ANODE\n#\n"));
+    print_dual(sprintf(
         "# Test Conditions: Va: %dv @ %d %%, Vg: %1.1fv @ %d %%\n#\n",
         $opts->{va}->[0],
         $opts->{offset}, $opts->{vg}->[0],
         $opts->{offset}
-    );
-    $log->printf(
+    ));
+    print_dual(sprintf(
         "# Test Results: Ia: %2.2f mA (%d%%), Ra: %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n",
         $center->{Ia}, ( $center->{Ia} / $opts->{ia} ) * 100,
         $RpA, ( $RpA / $opts->{rp} ) * 100,
         $GmA, ( $GmA / $opts->{gm} ) * 100,
         $MuA, ( $MuA / $opts->{mu} ) * 100,
-    );
-    $log->printf("# SECTION SCREEN\n#\n");
-    $log->printf(
+    ));
+    print_dual( sprintf("# SECTION SCREEN\n#\n"));
+    print_dual(sprintf(
         "# Test Conditions: Vs: %dv @ %d %%, Vg: %1.1fv @ %d %%\n#\n",
         $opts->{vs}->[0],
         $opts->{offset}, $opts->{vg}->[0],
         $opts->{offset}
-    );
+    ));
 
-    $log->printf(
+    print_dual( sprintf(
         "# Test Results: Is: %2.2f mA (%d%%), Rs: %2.2f kOhm (%d%%), Gm: %2.2f mA/V (%d%%), Mu: %d (%d%%)\n#\n",
         $center->{Is}, ( $center->{Is} / $opts->{ia} ) * 100,
         $RpS, ( $RpS / $opts->{rp} ) * 100,
         $GmS, ( $GmS / $opts->{gm} ) * 100,
         $MuS, ( $MuS / $opts->{mu} ) * 100,
-    );
- 
+    ));
+     #@pentode_fields = qw( type serial ia is ra rs gma gms mua mus dIa_dVs dIs_dVa );
+    
+    if ($opts->{store}) {
+        print STDOUT "Updating tube:" . $opts->{tube} . ':' . $opts->{name} . " triodes table in tubes.sq3\n";
+        my %db_data; 
+        @db_data{@triode_fields} = (
+            $opts->{tube},
+            $opts->{name},
+            $center->{Ia},
+            $center->{Is},
+            $RpA,
+            $RpS,
+            $GmA,
+            $GmS,
+            $MuA,
+            $MuS
+        );
+        
+        insert_triode( \%db_data ); 
+    }
 }    # }}}
 
 sub get_results_matrix {
