@@ -1,0 +1,513 @@
+Note that:
+
+dblCalVar1  = Va Gain
+dblCalVar2  = Vs Gain
+dblCalVar3  = Ia Gain
+dblCalVar4  = Is Gain
+dblCalVar5  = Vsupp
+dblCalVar6  = Vgrid(40V)
+dblCalVar7  = VglowA
+dblCalVar8  = Vgrid(4V)
+dblCalVar9  = Vgrid(sat)
+dblCalVar10 = VglowB
+
+This code snipped is based on GUI 3p12p3
+
+
+Sub ComposeMeasString(I As Integer, strCommandString As String, strCommand As String)
+'This routine generates the Command String for a measurement which can be send to the uTracer
+'The values for Anode, Screen, Grid and filament settings are supplied by intNmeas which points
+'to a measurement in the globally defined Matrix dblMeasMx
+
+Dim intA    As Integer      'integer representation of Anode voltage
+Dim intS    As Integer      'integer representation of Screen voltage
+Dim intG    As Integer      'integer representation of Grid voltage
+Dim intF    As Integer      'integer representation of Fillament voltage
+Dim strA    As String       'string represenation of Hex Anode voltage
+Dim strS    As String       'string represenation of Hex Screen voltage
+Dim strG    As String       'string represenation of Hex Grid voltage
+Dim strF    As String       'string represenation of Hex Fillamenf voltage
+Dim dblTemp As Double       'temporary variable
+Dim dblA    As Double       'temporary variable
+Dim dblB    As Double       'temporary variable
+Dim dblVh   As Double       'actual heater voltage
+
+'some auxiliary variables for the dual point grid bias
+Dim dblC        As Double       'default conversion factor (1023/50)
+Dim dblGamma4   As Double       'correction on the conversion factor at 4V
+Dim dblGamma40  As Double       'correction on the conversion factor at 40V
+Dim dblX1       As Double       'x-coordinate of point 1
+Dim dbly1       As Double       'y-coordinate of point 1
+Dim dblX2       As Double       'x-coordinate of point 2
+Dim dblY2       As Double       'y-coordinate of point 2
+Dim dblAA       As Double       'slope of line piece
+Dim dblBB       As Double       'y-axis intercept of line piece
+Dim dblalpha    As Double       'fraction of Vcc for low voltage grid supply
+Dim dblVcc      As Double       'supply voltage
+Dim dblAopamp   As Double       'opamp gain for low voltage grid supply
+Dim dblVsat     As Double       'minim output voltage
+Dim dblVgrid    As Double       'the absolute value of the grid voltage
+
+'Anode
+Dim dblAnodeR1      As Double
+Dim dblAnodeR2      As Double
+If intVersion = 1 Then          '300 V version
+    dblAnodeR1 = 6800#
+    dblAnodeR2 = 470000#
+ElseIf intVersion = 2 Then      '400 V version
+    dblAnodeR1 = 5230#
+    dblAnodeR2 = 470000#
+Else                            '50 V version
+    dblAnodeR1 = 5230#
+    dblAnodeR2 = 75000#
+End If
+dblTemp = (1024# / 5#) * (dblAnodeR1 / (dblAnodeR1 + dblAnodeR2)) * _
+                                    (dblMeasMX(I, intVa) + dblVsupSystem) * dblCalVar1
+intA = Int(dblTemp)
+strA = "0000"
+Mid$(strA, 5 - Len(Hex$(intA))) = Hex$(intA)
+frmCom.lblValueVa.Caption = Decimals(dblMeasMX(I, intVa), 1)
+frmCom.lblIntegerVa.Caption = intA
+frmCom.lblStringVa.Caption = strA
+
+'Screen
+Dim dblScreenR1     As Double
+Dim dblScreenR2     As Double
+If intVersion = 1 Then          '300 V version
+    dblScreenR1 = 6800#
+    dblScreenR2 = 470000#
+ElseIf intVersion = 2 Then      '400 V version
+    dblScreenR1 = 5230#
+    dblScreenR2 = 470000#
+Else                            '50 V version
+    dblScreenR1 = 5230#
+    dblScreenR2 = 75000#
+End If
+dblTemp = (1024# / 5#) * (dblScreenR1 / (dblScreenR1 + dblScreenR2)) * _
+                                    (dblMeasMX(I, intVs) + dblVsupSystem) * dblCalVar2
+intS = Int(dblTemp)
+strS = "0000"
+Mid$(strS, 5 - Len(Hex$(intS))) = Hex$(intS)
+frmCom.lblValueVs.Caption = Decimals(dblMeasMX(I, intVs), 1)
+frmCom.lblIntegerVs.Caption = intS
+frmCom.lblStringVs.Caption = strS
+
+'Control grid
+If ChkVglow.Value = 0 Then
+'the 0.00001 was added because sometimes Int(-1024*0.50) would return -1!
+'intG = Int(((-1023# * dblMeasMX(i, intVg) * dblCalVar6) / 50#) + 0.00001)
+'strG = "0000"
+'Mid$(strG, 5 - Len(Hex$(intG))) = Hex$(intG)
+'frmCom.lblValueVg.Caption = Decimals(dblMeasMX(i, intVg), 2)
+'frmCom.lblIntegerVg.Caption = intG
+'frmCom.lblStringVg.Caption = strG
+    dblC = 1023# / 50#
+    dblVsat = 2# * (dblCalVar9 - 1#)
+    dblGamma4 = dblCalVar8
+    dblGamma40 = dblCalVar6
+    dblVgrid = Abs(dblMeasMX(I, intVg))
+    If dblVgrid <= 4 Then
+        dblX1 = dblVsat
+        dbly1 = 0#
+        dblX2 = 4#
+        dblY2 = dblC * dblGamma4 * dblGamma40 * 4#
+    Else
+        dblX1 = 4#
+        dbly1 = dblC * dblGamma4 * dblGamma40 * 4#
+        dblX2 = 40#
+        dblY2 = dblC * dblGamma40 * 40#
+    End If
+    dblAA = (dblY2 - dbly1) / (dblX2 - dblX1)
+    dblBB = dbly1 - dblAA * dblX1
+    intG = CInt(dblAA * dblVgrid + dblBB)
+Else
+    dblVcc = 5#
+    dblalpha = 2# / 3#
+    dblAopamp = 3#
+    dblC = 1023# / 5#
+    dblX1 = (dblC * dblCalVar7 / dblAopamp) * dblMeasMX(I, intVg)
+    dblX2 = (dblC * dblalpha * dblCalVar10 * dblVcc)
+    intG = CInt(dblX1 + dblX2)
+End If
+
+If intG > 1023 Then intG = 1023
+If intG < 0 Then intG = 0
+strG = "0000"
+Mid$(strG, 5 - Len(Hex$(intG))) = Hex$(intG)
+frmCom.lblValueVg.Caption = Decimals(dblMeasMX(I, intVg), 2)
+frmCom.lblIntegerVg.Caption = intG
+frmCom.lblStringVg.Caption = strG
+
+'Filament
+If chkExtVheat.Value = 0 Then
+   dblVh = dblVsupSystem
+Else
+   dblVh = dblVheat
+End If
+dblTemp = 1024# * (dblMeasMX(I, intVf) * dblMeasMX(I, intVf)) / (dblVh * dblVh)
+intF = Int(dblTemp)
+strF = "0000"
+Mid$(strF, 5 - Len(Hex$(intF))) = Hex$(intF)
+frmCom.lblValueVf.Caption = Decimals(dblMeasMX(I, intVf), 2)
+frmCom.lblIntegerVf.Caption = intF
+frmCom.lblStringVf.Caption = strF
+
+frmCom.Refresh
+
+strCommandString = strCommand + strA + strS + strG + strF
+
+End Sub
+
+
+
+Sub DeComposeString(I As Integer, strResultString As String)
+'This routine analyzes the result string which is returned by the uTracer after a measurement point.
+'The routine devides the total string into 8 sub-strings, displays the strings and the integer and decimal
+'equivalents in the communication frame. It furthermore distils the anode and screen grid currents from
+'the data and stores it in the Measurement Matrix
+
+Dim strStat             As String
+Dim intStat             As String
+Dim strWord             As String
+Dim lngWord             As String
+Dim dblWord1            As Double
+Dim dblWord2            As Double
+Dim dblWord3            As Double
+Dim dblWord4            As Double
+Dim dblWord5            As Double
+Dim dblWord6            As Double
+Dim dblWord7            As Double
+Dim dblWord8            As Double
+Dim N                   As Integer
+Dim intGainTab(7)       As Integer
+Dim dblGainIa           As Double
+Dim dblGainIs           As Double
+Dim intGainIa           As Integer
+Dim intGainIs           As Integer
+Dim intGainIndexIa      As Integer
+Dim intGainIndexIs      As Integer
+Dim intMaxGain          As Integer
+Dim intAverageTab(7)    As Integer
+Dim dblAveraging        As Double
+
+intGainTab(0) = 1
+intGainTab(1) = 2
+intGainTab(2) = 5
+intGainTab(3) = 10
+intGainTab(4) = 20
+intGainTab(5) = 50
+intGainTab(6) = 100
+intGainTab(7) = 200
+
+If (intVersion = 1 Or intVersion = 2) Then
+    intAverageTab(0) = 1
+    intAverageTab(1) = 1
+    intAverageTab(2) = 1
+    intAverageTab(3) = 1
+    intAverageTab(4) = 2
+    intAverageTab(5) = 2
+    intAverageTab(6) = 4
+    intAverageTab(7) = 8
+Else
+    intAverageTab(0) = 2
+    intAverageTab(1) = 2
+    intAverageTab(2) = 4
+    intAverageTab(3) = 4
+    intAverageTab(4) = 8
+    intAverageTab(5) = 8
+    intAverageTab(6) = 16
+    intAverageTab(7) = 16
+End If
+
+
+
+'Set Here the Pulse Length
+Dim dblSamplePulseLength As Double
+dblSamplePulseLength = 0.001
+
+'All parameters related to the Anode current measurement
+Dim dblAnodeRs       As Double
+Dim dblIa            As Double
+Dim dblIaComp        As Double
+If (intVersion = 1 Or intVersion = 2) Then  '300V and 400V versions
+    dblAnodeRs = 17.8
+Else                                        '50V versions
+    dblAnodeRs = 100
+End If
+
+'All parameters related to the Screen current measurement
+Dim dblScreenRs      As Double
+Dim dblIs            As Double
+Dim dblIsComp        As Double
+If (intVersion = 1 Or intVersion = 2) Then  '300V and 400V versions
+    dblScreenRs = 17.8
+Else                                        '50V versions
+    dblScreenRs = 100
+End If
+
+'All parameters related to the Anode voltage measurement
+Dim dblVa             As Double
+Dim dblAnodeDivR1     As Double
+Dim dblAnodeDivR2     As Double
+If intVersion = 1 Then          '300 V version
+    dblAnodeDivR1 = 6800#
+    dblAnodeDivR2 = 470000#
+ElseIf intVersion = 2 Then      '400 V version
+    dblAnodeDivR1 = 5230#
+    dblAnodeDivR2 = 470000#
+Else                            '50 V version
+    dblAnodeDivR1 = 5230#
+    dblAnodeDivR2 = 75000#
+End If
+
+'All parameters related to the Screen voltage measurement
+Dim dblVs             As Double
+Dim dblScreenDivR1    As Double
+Dim dblScreenDivR2    As Double
+dblScreenDivR1 = 5230#
+dblScreenDivR2 = 75000#
+If intVersion = 1 Then          '300 V version
+    dblScreenDivR1 = 6800#
+    dblScreenDivR2 = 470000#
+ElseIf intVersion = 2 Then      '400 V version
+    dblScreenDivR1 = 5230#
+    dblScreenDivR2 = 470000#
+Else                            '50 V version
+    dblScreenDivR1 = 5230#
+    dblScreenDivR2 = 75000#
+End If
+
+'All parameters related to the power supply voltage
+Dim dblVsup           As Double
+Dim dblVsupR1         As Double
+Dim dblVsupR2         As Double
+dblVsupR1 = 1800
+dblVsupR2 = 6800
+
+'All parameters related to the general negative power supply
+Dim dblVmin            As Double
+Dim dblVminR1          As Double
+Dim dblVminR2          As Double
+dblVminR1 = 2000#
+dblVminR2 = 47000#
+
+strStat = Mid$(strResultString, 1, 2)
+intStat = Val("&H" + strStat)
+frmCom.lblStat.Caption = strStat
+'note the hex status byte 11 corresponds to 17 dec
+'note the hex status byte 11 corresponds to 17 dec
+If intStat = 17 Then
+    blnComplianceError = True
+    dblMeasMX(I, intCe) = -1  '@@## setting of the error flag added (see next lines)
+  Else
+    dblMeasMX(I, intCe) = 1
+End If
+For N = 1 To 9
+    strWord = Mid$(strResultString, 3 + 4 * (N - 1), 4)
+    lngWord = Val("&H" + strWord)
+    Select Case N
+    Case 1
+        'dblIa is the anode current
+        frmCom.lblStr1.Caption = strWord
+        frmCom.lblInt1.Caption = lngWord
+        dblIa = (CDbl(lngWord) * (5# / 1024#) * 1000#) * dblCalVar3 / dblAnodeRs
+        dblMeasMX(I, intIa) = dblIa
+    Case 2
+        'dblIaComp is the anode current before PGA
+        frmCom.lblStr2.Caption = strWord
+        frmCom.lblInt2.Caption = lngWord
+        dblIaComp = (CDbl(lngWord) * (5# / 1024#) * 1000#) * dblCalVar3 / dblAnodeRs
+        frmCom.lblVal2.Caption = Decimals(dblIaComp, 1)
+    Case 3
+        'dblIs is the screen current
+        frmCom.lblStr3.Caption = strWord
+        frmCom.lblInt3.Caption = lngWord
+        dblIs = (CDbl(lngWord) * (5# / 1024#) * 1000#) * dblCalVar4 / dblScreenRs
+        dblMeasMX(I, intIs) = dblIs
+    Case 4
+        'dblIsComp is the screen current before PGA
+        frmCom.lblStr4.Caption = strWord
+        frmCom.lblInt4.Caption = lngWord
+        dblIsComp = (CDbl(lngWord) * (5# / 1024#) * 1000#) * dblCalVar4 / dblScreenRs
+        frmCom.lblVal4.Caption = Decimals(dblIsComp, 1)
+    Case 5
+        'The anode voltage after the measurement pulse
+        frmCom.lblStr5.Caption = strWord
+        frmCom.lblInt5.Caption = lngWord
+        dblVa = CDbl(lngWord) * (5# / 1024#) * _
+        ((dblAnodeDivR1 + dblAnodeDivR2) / (dblAnodeDivR1 * dblCalVar1)) - dblVsupSystem
+        frmCom.lblVal5.Caption = Decimals(dblVa, 1)
+    Case 6
+        'The screen voltage after the measurement pulse
+        frmCom.lblStr6.Caption = strWord
+        frmCom.lblInt6.Caption = lngWord
+        dblVs = CDbl(lngWord) * (5# / 1024#) * _
+        ((dblScreenDivR1 + dblScreenDivR2) / (dblScreenDivR1 * dblCalVar2)) - dblVsupSystem
+        frmCom.lblVal6.Caption = Decimals(dblVs, 1)
+    Case 7
+        'The supply voltage
+        frmCom.lblStr7.Caption = strWord
+        frmCom.lblInt7.Caption = lngWord
+        dblVsup = CDbl(lngWord) * (5# / 1024#) * ((dblVsupR1 + dblVsupR2) / dblVsupR1) * dblCalVar5
+        dblVsupMeas = dblVsup
+        frmCom.lblVal7.Caption = Decimals(dblVsup, 1)
+    Case 8
+        'The negative power supply voltage
+        frmCom.lblStr8.Caption = strWord
+        frmCom.lblInt8.Caption = lngWord
+        dblVmin = (CDbl(lngWord) / 1024#) - 1#
+        dblVmin = 5# * ((dblVminR1 + dblVminR2) / dblVminR1) * dblVmin + 5#
+        frmCom.lblVal8.Caption = Decimals(dblVmin, 1)
+    Case 9
+        'the returned gains
+        frmCom.lblIaRetGainHex.Caption = Mid$(strWord, 1, 2)
+        intGainIndexIa = Val(Mid$(strWord, 1, 2))
+        intGainIa = intGainTab(intGainIndexIa)
+        frmCom.lblIaRetGainDec.Caption = intGainIa
+        dblGainIa = CDbl(intGainIa)
+        frmCom.lblIsRetGainHex.Caption = Mid$(strWord, 3, 2)
+        intGainIndexIs = Val(Mid$(strWord, 3, 2))
+        intGainIs = intGainTab(intGainIndexIs)
+        frmCom.lblIsRetGainDec.Caption = intGainIs
+        dblGainIs = CDbl(intGainIs)
+    End Select
+Next N
+
+If cboAverage.ListIndex = 6 Then
+    'auto averaging
+    'first find maximum gain
+    If intGainIndexIa > intGainIndexIs Then
+        intMaxGain = intGainIndexIa
+    Else
+        intMaxGain = intGainIndexIs
+    End If
+    dblAveraging = CDbl(intAverageTab(intMaxGain))
+Else
+    'standard averaging
+    dblAveraging = CDbl(2 ^ cboAverage.ListIndex)
+End If
+
+dblMeasMX(I, intIa) = dblMeasMX(I, intIa) / dblAveraging
+frmCom.lblVal1.Caption = Decimals(dblMeasMX(I, intIa), 1)
+dblMeasMX(I, intIs) = dblMeasMX(I, intIs) / dblAveraging
+frmCom.lblVal3.Caption = Decimals(dblMeasMX(I, intIs), 1)
+
+frmCom.lblActualAverage.Caption = dblAveraging
+
+dblMeasMX(I, intIa) = dblMeasMX(I, intIa) / dblGainIa
+dblMeasMX(I, intIs) = dblMeasMX(I, intIs) / dblGainIs
+
+If frmCom.chkcorrection.Value = 1 Then
+    dblMeasMX(I, intVa) = dblVa - (dblMeasMX(I, intIa) / 1000#) * dblAnodeRs
+    dblMeasMX(I, intVs) = dblVs - (dblMeasMX(I, intIs) / 1000#) * dblScreenRs
+End If
+
+frmCom.Refresh
+
+End Sub
+
+
+
+
+
+Sub SetFilament(dblHeaterVoltage As Double, blnFault As Boolean)
+'This routine sends the command string to turn the filament on.
+'The routine gets the value for the filament voltage from the first row from the
+'mesurement matrix, because it is this line which contains the bias conditions
+'for the first measurement point. To get the first row, routine ComposeMatrix
+'is called although only the first row is used. The routine is called again in
+'the "DoMeasurement" routine so that the user can stil make chages in the bias
+'settings between the moment the filemant is swicthed on, and the actual measurement.
+
+Dim intF             As Integer
+Dim strF             As String
+Dim strCommandString As String
+Dim dblTemp          As Double
+Dim dblVh            As Double      'actual heater voltage
+
+'Compose the command string (we only need the filament voltage)
+frmCom.lblValueVa.Caption = 0#
+frmCom.lblIntegerVa.Caption = 0
+frmCom.lblStringVa.Caption = "0000"
+
+frmCom.lblValueVs.Caption = 0#
+frmCom.lblIntegerVs.Caption = 0
+frmCom.lblStringVs.Caption = "0000"
+
+frmCom.lblValueVg.Caption = 0#
+frmCom.lblIntegerVg.Caption = 0
+frmCom.lblStringVg.Caption = "0000"
+
+'Filament
+If chkExtVheat.Value = 0 Then
+   dblVh = dblVsupSystem
+Else
+   dblVh = dblVheat
+End If
+dblTemp = 1024# * (dblHeaterVoltage * dblHeaterVoltage) / (dblVh * dblVh)
+intF = Int(dblTemp)
+strF = "0000"
+Mid$(strF, 5 - Len(Hex$(intF))) = Hex$(intF)
+frmCom.lblValueVf.Caption = dblHeaterVoltage
+frmCom.lblIntegerVf.Caption = intF
+frmCom.lblStringVf.Caption = strF
+
+frmCom.Refresh
+
+strCommandString = "40" + "0000" + "0000" + "0000" + strF
+
+'send the string and deal with errors if any
+Call SndString(strCommandString, blnFault)
+
+End Sub
+
+
+
+
+
+Sub SndSettings(blnFault As Boolean)
+'This routine sends the command string containing the settings
+
+Dim strCommandString As String
+Dim strIaGain        As String
+Dim strIsGain        As String
+Dim strAverage       As String
+Dim intIaGain        As Integer
+Dim intIsGain        As Integer
+Dim intAverage       As Integer
+Dim strCompl         As String
+Dim strCompliance(9) As String
+
+strCompliance(0) = "8F" '35 mA
+strCompliance(1) = "85" '20 mA
+strCompliance(2) = "A7" '15 mA
+strCompliance(3) = "A5" '10 mA
+strCompliance(4) = "A2" '4 mA
+strCompliance(5) = "A1" '2 mA
+strCompliance(6) = "00" ' designated compliance off
+
+strIaGain = "00"
+'by happy coincidence the Listindex number of the combo box corresponds to the gain setting
+intIaGain = cboIaRange.ListIndex
+Mid$(strIaGain, 3 - Len(Hex$(intIaGain))) = Hex$(intIaGain)
+frmCom.lblIaGain.Caption = strIaGain
+strIsGain = "00"
+'by happy coincidence the Listindex number of the combo box corresponds to the gain setting
+intIsGain = cboIsRange.ListIndex
+Mid$(strIsGain, 3 - Len(Hex$(intIsGain))) = Hex$(intIsGain)
+frmCom.lblIsGain.Caption = strIsGain
+intAverage = 2 ^ cboAverage.ListIndex
+strAverage = "00"
+Mid$(strAverage, 3 - Len(Hex$(intAverage))) = Hex$(intAverage)
+frmCom.lblAverage.Caption = strAverage
+strCompl = strCompliance(cboCompliance.ListIndex)
+frmCom.lblCompliance.Caption = strCompl
+
+frmCom.Refresh
+
+strCommandString = "00" + "00" + "00" + "00" + "00" + strCompl + strAverage + strIsGain + strIaGain
+
+'send the string and deal with errors if any
+Call SndString(strCommandString, blnFault)
+
+End Sub

@@ -1,0 +1,9 @@
+.project
+data
+pentodes
+*.csv
+*.png
+*.pdf
+*.orig
+*.sq3
+notes.txt
